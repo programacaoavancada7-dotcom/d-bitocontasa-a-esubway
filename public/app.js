@@ -6,35 +6,28 @@ let token = localStorage.getItem('token');
 let role = localStorage.getItem('role');
 let nomeUsuario = localStorage.getItem('nomeUsuario');
 
-let gastosSelecionados = [];
 let filtro = { ano: 0, mes: 0 };
-let cacheGastos = [];
 let logoAtual = 'acai';
+
+// Seleção em lote agora é por módulo (funcionário/entregador), já que o
+// financeiro de cada um vive numa tela separada — ver missão de UX.
+let selecao = { funcionario: [], entregador: [] };
+
+// Cache da última carga, para não refazer requisições ao só trocar de aba.
+let cache = { funcionarios: [], entregadores: [], gastos: [], resumo: null };
 
 /* =========================================================
    HELPER DE DOM SEGURO
-   Por quê: a versão antiga montava HTML por concatenação de string
-   (`lista.innerHTML += \`...${gasto.descricao}...\``) com dados digitados
-   por gente (nome, descrição, usuário). Duas consequências reais:
-   1) XSS — um valor como <img src=x onerror=alert(1)> vira HTML de
-      verdade.
-   2) Quebra de tela — os botões usavam
-      onclick="editarGasto(1, 10, '${descricao}')"; qualquer aspas simples
-      na descrição (comum em texto livre) quebra o atributo e o item some
-      ou passa a executar algo diferente do esperado.
-   `el()` cria elementos reais e usa textContent para dado do usuário, e
-   os "onclick" viram addEventListener de verdade — nenhum dado do
-   usuário entra em uma string de HTML ou de atributo.
 ========================================================= */
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
 
   for (const [key, value] of Object.entries(attrs)) {
-    if (value === undefined || value === null) continue;
+    if (value === undefined || value === null || value === false) continue;
     if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value; // conteúdo visível (nunca vira atributo)
-    else if (key === 'html') node.innerHTML = value; // só para markup estático, nunca dado de usuário
+    else if (key === 'text') node.textContent = value;
+    else if (key === 'html') node.innerHTML = value; // só para markup estático
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value);
   }
@@ -54,8 +47,11 @@ function limparEPreencher(container, filhos) {
   filhos.forEach((filho) => container.appendChild(filho));
 }
 
-function estadoVazio(mensagem) {
-  return el('div', { class: 'empty-state' }, mensagem);
+function estadoVazio(mensagem, icone = '🗂️') {
+  return el('div', { class: 'empty-state' }, [
+    el('span', { class: 'empty-state-icon', text: icone }),
+    mensagem,
+  ]);
 }
 
 function formatarMoeda(valor) {
@@ -69,17 +65,15 @@ function formatarData(dataSql) {
 }
 
 /* =========================================================
-   TOAST (substitui alert())
+   TOAST
 ========================================================= */
 
 const Toast = {
   show(mensagem, tipo = 'info') {
     const container = document.getElementById('toastContainer');
     if (!container) return;
-
     const toast = el('div', { class: `toast ${tipo}` }, mensagem);
     container.appendChild(toast);
-
     setTimeout(() => {
       toast.classList.add('saindo');
       setTimeout(() => toast.remove(), 200);
@@ -90,7 +84,7 @@ const Toast = {
 };
 
 /* =========================================================
-   MODAL (substitui confirm()/prompt())
+   MODAL
 ========================================================= */
 
 const Modal = {
@@ -105,7 +99,8 @@ const Modal = {
     });
   },
 
-  abrir(conteudoNode) {
+  abrir(conteudoNode, { largo = false } = {}) {
+    this.box.classList.toggle('modal-wide', largo);
     limparEPreencher(this.box, [conteudoNode]);
     this.overlay.classList.remove('hidden');
   },
@@ -117,78 +112,83 @@ const Modal = {
 
   confirmar({ titulo, mensagem, textoConfirmar = 'Confirmar', perigo = false }) {
     return new Promise((resolve) => {
-      const encerrar = (resultado) => {
-        this.fechar();
-        resolve(resultado);
-      };
+      const encerrar = (resultado) => { this.fechar(); resolve(resultado); };
 
-      const conteudo = el('div', {}, [
+      this.abrir(el('div', {}, [
         el('h3', { text: titulo }),
-        el('p', { text: mensagem }),
+        el('p', { text: mensagem, style: 'margin-top:8px' }),
         el('div', { class: 'modal-acoes' }, [
-          el('button', { class: 'btn-secundario', onclick: () => encerrar(false), text: 'Cancelar' }),
-          el('button', {
-            class: perigo ? 'excluir-btn' : '',
-            onclick: () => encerrar(true),
-            text: textoConfirmar,
-          }),
+          el('button', { class: 'btn btn-secondary', onclick: () => encerrar(false), text: 'Cancelar' }),
+          el('button', { class: perigo ? 'btn btn-danger' : 'btn btn-primary', onclick: () => encerrar(true), text: textoConfirmar }),
         ]),
-      ]);
-
-      this.abrir(conteudo);
+      ]));
     });
   },
 
   /**
-   * Formulário genérico com N campos de texto, substitui as cadeias de
-   * `prompt()` usadas antes para editar funcionário/entregador/gasto.
-   * @param {{titulo:string, campos:{nome:string,label:string,valor?:string,tipo?:string}[], textoConfirmar?:string}} opcoes
-   * @returns {Promise<Record<string,string>|null>} null se cancelado
+   * Formulário genérico com validação inline simples (campo obrigatório
+   * fica com borda vermelha + mensagem se enviado em branco).
    */
-  formulario({ titulo, campos, textoConfirmar = 'Salvar', avisoPerigo = null }) {
+  formulario({ titulo, subtitulo, campos, textoConfirmar = 'Salvar', avisoPerigo = null }) {
     return new Promise((resolve) => {
       const inputsPorCampo = {};
+      const errosPorCampo = {};
 
-      const encerrar = (resultado) => {
-        this.fechar();
-        resolve(resultado);
-      };
+      const encerrar = (resultado) => { this.fechar(); resolve(resultado); };
+
+      function validar() {
+        let ok = true;
+        campos.forEach((campo) => {
+          if (!campo.obrigatorio) return;
+          const input = inputsPorCampo[campo.nome];
+          const valido = input.value.trim().length > 0;
+          input.classList.toggle('invalid', !valido);
+          errosPorCampo[campo.nome].classList.toggle('hidden', valido);
+          if (!valido) ok = false;
+        });
+        return ok;
+      }
 
       const camposNode = campos.map((campo) => {
         const input = el('input', {
           type: campo.tipo || 'text',
           value: campo.valor || '',
-          placeholder: campo.label,
+          placeholder: campo.placeholder || campo.label,
           autocomplete: campo.tipo === 'password' ? 'new-password' : 'off',
         });
         inputsPorCampo[campo.nome] = input;
 
-        return el('div', { class: 'form-group' }, [
-          el('label', { text: campo.label }),
+        const erro = el('div', { class: 'field-error hidden', text: 'Campo obrigatório.' });
+        errosPorCampo[campo.nome] = erro;
+
+        return el('div', { class: 'field', style: 'margin-top:14px' }, [
+          el('label', { class: campo.obrigatorio ? 'field-required' : '', text: campo.label }),
           input,
+          erro,
+          campo.dica ? el('div', { class: 'field-hint', text: campo.dica }) : null,
         ]);
       });
 
-      const conteudo = el('div', {}, [
+      this.abrir(el('div', {}, [
         el('h3', { text: titulo }),
+        subtitulo ? el('p', { class: 'modal-subtitle', text: subtitulo }) : null,
         ...camposNode,
         avisoPerigo ? el('div', { class: 'modal-aviso', text: avisoPerigo }) : null,
         el('div', { class: 'modal-acoes' }, [
-          el('button', { class: 'btn-secundario', onclick: () => encerrar(null), text: 'Cancelar' }),
+          el('button', { class: 'btn btn-secondary', onclick: () => encerrar(null), text: 'Cancelar' }),
           el('button', {
+            class: 'btn btn-primary',
             onclick: () => {
+              if (!validar()) return;
               const valores = {};
-              for (const [nome, input] of Object.entries(inputsPorCampo)) {
-                valores[nome] = input.value;
-              }
+              for (const [nome, input] of Object.entries(inputsPorCampo)) valores[nome] = input.value;
               encerrar(valores);
             },
             text: textoConfirmar,
           }),
         ]),
-      ]);
+      ]));
 
-      this.abrir(conteudo);
       const primeiroInput = Object.values(inputsPorCampo)[0];
       if (primeiroInput) setTimeout(() => primeiroInput.focus(), 30);
     });
@@ -196,10 +196,7 @@ const Modal = {
 };
 
 /* =========================================================
-   API — wrapper único para fetch + token + tratamento de erro
-   Por quê: antes cada função repetia `headers: { authorization: token }`
-   e cada uma decidia na sua própria forma como ler `data.error`. Agora
-   isso está num só lugar.
+   API
 ========================================================= */
 
 const Api = {
@@ -214,17 +211,11 @@ const Api = {
     });
 
     let dados = null;
-    try {
-      dados = await resposta.json();
-    } catch {
-      dados = null;
-    }
+    try { dados = await resposta.json(); } catch { dados = null; }
 
     if (!resposta.ok) {
-      const mensagem = (dados && dados.error) || 'Erro inesperado. Tente novamente.';
-      throw new Error(mensagem);
+      throw new Error((dados && dados.error) || 'Erro inesperado. Tente novamente.');
     }
-
     return dados;
   },
 
@@ -243,12 +234,160 @@ function queryStringFiltro() {
 }
 
 /* =========================================================
+   TABELA (busca + ordenação + paginação + ações agrupadas)
+   Componente único reutilizado em funcionários, entregadores e nos dois
+   financeiros — antes cada lista tinha sua própria função de render.
+========================================================= */
+
+function criarTabela({ container, colunas, porPagina = 8, vazio = 'Nenhum registro encontrado.', iconeVazio = '🗂️' }) {
+  let dadosCompletos = [];
+  let dadosFiltrados = [];
+  let pagina = 1;
+  let ordenacao = { coluna: null, direcao: 1 };
+
+  function ordenar(lista) {
+    if (!ordenacao.coluna) return lista;
+    const col = colunas.find((c) => c.chave === ordenacao.coluna);
+    const copia = [...lista];
+    copia.sort((a, b) => {
+      const va = col.valorOrdenacao ? col.valorOrdenacao(a) : a[ordenacao.coluna];
+      const vb = col.valorOrdenacao ? col.valorOrdenacao(b) : b[ordenacao.coluna];
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * ordenacao.direcao;
+      return String(va ?? '').localeCompare(String(vb ?? ''), 'pt-BR') * ordenacao.direcao;
+    });
+    return copia;
+  }
+
+  function renderPaginacao(totalPaginas) {
+    const controles = el('div', { class: 'table-pagination-controls' });
+
+    controles.appendChild(el('button', {
+      class: 'page-btn', disabled: pagina === 1 || undefined,
+      onclick: () => { pagina -= 1; render(); }, text: '‹',
+    }));
+
+    for (let p = 1; p <= totalPaginas; p += 1) {
+      controles.appendChild(el('button', {
+        class: `page-btn ${p === pagina ? 'active' : ''}`,
+        onclick: () => { pagina = p; render(); },
+        text: String(p),
+      }));
+    }
+
+    controles.appendChild(el('button', {
+      class: 'page-btn', disabled: pagina === totalPaginas || undefined,
+      onclick: () => { pagina += 1; render(); }, text: '›',
+    }));
+
+    return el('div', { class: 'table-pagination' }, [
+      el('span', { class: 'table-pagination-info', text: `${dadosFiltrados.length} registro(s)` }),
+      controles,
+    ]);
+  }
+
+  function render() {
+    const ordenados = ordenar(dadosFiltrados);
+    const totalPaginas = Math.max(1, Math.ceil(ordenados.length / porPagina));
+    if (pagina > totalPaginas) pagina = totalPaginas;
+    const pageItems = ordenados.slice((pagina - 1) * porPagina, (pagina - 1) * porPagina + porPagina);
+
+    container.innerHTML = '';
+
+    if (!dadosCompletos.length) {
+      container.appendChild(estadoVazio(vazio, iconeVazio));
+      return;
+    }
+
+    if (!ordenados.length) {
+      container.appendChild(estadoVazio('Nada encontrado para essa busca/filtro.', '🔍'));
+      return;
+    }
+
+    const headRow = el('tr', {}, colunas.map((col) => el('th', {
+      class: col.sortavel ? 'sortable' : '',
+      onclick: col.sortavel ? () => {
+        ordenacao = ordenacao.coluna === col.chave ? { coluna: col.chave, direcao: ordenacao.direcao * -1 } : { coluna: col.chave, direcao: 1 };
+        render();
+      } : undefined,
+    }, [
+      col.titulo,
+      col.sortavel ? el('span', {
+        class: `sort-arrow ${ordenacao.coluna === col.chave ? 'active' : ''}`,
+        text: ordenacao.coluna === col.chave ? (ordenacao.direcao === 1 ? '▲' : '▼') : '↕',
+      }) : null,
+    ])));
+
+    const tbody = el('tbody', {}, pageItems.map((item) => el('tr', {}, colunas.map((col) => col.render(item)))));
+
+    const table = el('table', { class: 'data-table' }, [el('thead', {}, headRow), tbody]);
+    container.appendChild(el('div', { class: 'table-wrapper' }, table));
+
+    if (totalPaginas > 1) container.appendChild(renderPaginacao(totalPaginas));
+  }
+
+  return {
+    setDados(lista) { dadosCompletos = lista; dadosFiltrados = lista; pagina = 1; render(); },
+    filtrar(fn) { dadosFiltrados = dadosCompletos.filter(fn); pagina = 1; render(); },
+  };
+}
+
+function colunaTexto(chave, titulo, { sortavel = true, classe = '' } = {}) {
+  return { chave, titulo, sortavel, render: (item) => el('td', { class: classe, text: String(item[chave] ?? '') }) };
+}
+
+function colunaStatus(chave = 'status') {
+  return {
+    chave, titulo: 'Status', sortavel: true,
+    render: (item) => el('td', {}, el('span', { class: `status-badge ${item[chave]}`, text: item[chave] })),
+  };
+}
+
+function colunaAcoes(gerarItens) {
+  return {
+    chave: '_acoes', titulo: '', sortavel: false,
+    render: (item) => {
+      const td = el('td');
+      const wrapper = el('div', { class: 'row-actions' });
+      const btn = el('button', { class: 'kebab-btn', text: '⋮' });
+      wrapper.appendChild(btn);
+
+      let menuAberto = null;
+      function fechar() {
+        if (menuAberto) { menuAberto.remove(); menuAberto = null; document.removeEventListener('click', aoClicarFora); }
+      }
+      function aoClicarFora(evento) {
+        if (!wrapper.contains(evento.target)) fechar();
+      }
+
+      btn.addEventListener('click', (evento) => {
+        evento.stopPropagation();
+        if (menuAberto) { fechar(); return; }
+        menuAberto = el('div', { class: 'kebab-menu' }, gerarItens(item).map((acao) => el('button', {
+          class: acao.perigo ? 'danger' : '',
+          onclick: () => { fechar(); acao.onClick(); },
+          text: acao.label,
+        })));
+        wrapper.appendChild(menuAberto);
+        document.addEventListener('click', aoClicarFora);
+      });
+
+      td.appendChild(wrapper);
+      return td;
+    },
+  };
+}
+
+function ligarBusca(inputId, aoDigitar) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.addEventListener('input', () => aoDigitar(input.value.trim().toLowerCase()));
+}
+
+/* =========================================================
    LOGIN / SESSÃO
 ========================================================= */
 
-if (token && role) {
-  iniciarPainel();
-}
+if (token && role) iniciarPainel();
 
 async function login() {
   const usuario = document.getElementById('usuario').value.trim();
@@ -263,7 +402,6 @@ async function login() {
 
   try {
     const dados = await Api.post('/login', { usuario, senha });
-
     token = dados.token;
     role = dados.role;
     nomeUsuario = dados.nome || usuario;
@@ -278,7 +416,12 @@ async function login() {
   }
 }
 
-function iniciarPainel() {
+function logout() {
+  localStorage.clear();
+  location.reload();
+}
+
+async function iniciarPainel() {
   document.getElementById('loginBox').classList.add('hidden');
 
   const mensagem = `Bem-vindo${nomeUsuario ? ', ' + nomeUsuario : ''} ao seu controle de gastos.`;
@@ -289,83 +432,272 @@ function iniciarPainel() {
 
   if (role === 'admin') {
     document.getElementById('adminPanel').classList.remove('hidden');
-
-    // carregarFuncionarios() limpa e preenche o <select> de pessoas;
-    // carregarEntregadores() só ADICIONA opções nele depois. Se as duas
-    // rodassem em paralelo sem ordem garantida (como antes), uma resposta
-    // de rede mais rápida da segunda podia fazer a primeira apagar as
-    // opções de entregador já inseridas. Por isso aqui elas são
-    // sequenciais; carregarGastos() não mexe no <select>, então continua
-    // podendo rodar em paralelo.
-    (async () => {
-      await carregarFuncionarios();
-      await carregarEntregadores();
-    })();
-
-    carregarGastos();
+    inicializarBuscas();
+    await carregarTudo();
   } else {
     document.getElementById('funcionarioPanel').classList.remove('hidden');
-    carregarMeusGastos();
-    carregarMeuTotal();
+    await carregarPainelFuncionario();
   }
 }
 
-function logout() {
-  localStorage.clear();
-  location.reload();
+/* =========================================================
+   SIDEBAR / NAVEGAÇÃO
+========================================================= */
+
+function alternarSidebar() {
+  const layout = document.getElementById('adminPanel');
+  layout.classList.toggle('sidebar-collapsed');
+}
+
+const secoesComCargaSobDemanda = new Set();
+
+function mudarSecao(secaoId, botaoClicado) {
+  document.querySelectorAll('.admin-section').forEach((secao) => secao.classList.remove('active-section'));
+  const secao = document.getElementById(secaoId);
+  if (secao) secao.classList.add('active-section');
+
+  document.querySelectorAll('.side-nav-item').forEach((btn) => btn.classList.remove('active'));
+  if (botaoClicado) botaoClicado.classList.add('active');
+}
+
+function mudarSubTab(moduloId, subTabId, botaoClicado) {
+  const modulo = document.getElementById(moduloId);
+  modulo.querySelectorAll('.module-panel').forEach((p) => p.classList.remove('active-panel'));
+  document.getElementById(subTabId).classList.add('active-panel');
+
+  modulo.querySelectorAll('.tab-pill').forEach((btn) => btn.classList.remove('active'));
+  if (botaoClicado) botaoClicado.classList.add('active');
+}
+
+function inicializarBuscas() {
+  ligarBusca('buscarFuncionario', (termo) => tabelaFuncionarios.filtrar((f) => f.nome.toLowerCase().includes(termo) || f.usuario.toLowerCase().includes(termo)));
+  ligarBusca('buscarEntregador', (termo) => tabelaEntregadores.filtrar((e) => e.nome.toLowerCase().includes(termo) || e.usuario.toLowerCase().includes(termo)));
+  ligarBusca('buscarGastoFuncionario', (termo) => tabelasGastos.funcionario.filtrar((g) => g.nome.toLowerCase().includes(termo)));
+  ligarBusca('buscarGastoEntregador', (termo) => tabelasGastos.entregador.filtrar((g) => g.nome.toLowerCase().includes(termo)));
 }
 
 /* =========================================================
-   RESET DO SISTEMA
-   Antes: dois prompt() comparando com a string fixa "blackout" (visível
-   no código-fonte do navegador) e a rota no servidor não conferia nada
-   além do token de admin. Agora o modal pede a SENHA REAL da conta e a
-   frase de confirmação, e o servidor valida os dois (ver
-   src/services/sistemaService.js) além de gravar um backup antes de apagar.
+   CARGA GERAL (admin)
 ========================================================= */
 
-async function resetarSistema() {
-  const FRASE = 'APAGAR TUDO';
+async function carregarTudo() {
+  const [funcionarios, entregadores, gastos, resumo] = await Promise.all([
+    Api.get('/funcionarios'),
+    Api.get('/entregadores'),
+    Api.get(`/admin/gastos${queryStringFiltro()}`),
+    Api.get(`/admin/relatorios/resumo${queryStringFiltro()}`),
+  ]);
 
+  cache = { funcionarios, entregadores, gastos, resumo };
+
+  renderizarDashboard();
+  renderizarFuncionarios();
+  renderizarEntregadores();
+  renderizarGastosPorTipo('funcionario');
+  renderizarGastosPorTipo('entregador');
+  renderizarRanking('funcionario');
+  renderizarRanking('entregador');
+  renderizarSelectPessoas();
+  popularSeletorDeAno();
+}
+
+async function recarregarGastosEResumo() {
+  const [gastos, resumo] = await Promise.all([
+    Api.get(`/admin/gastos${queryStringFiltro()}`),
+    Api.get(`/admin/relatorios/resumo${queryStringFiltro()}`),
+  ]);
+  cache.gastos = gastos;
+  cache.resumo = resumo;
+
+  renderizarDashboard();
+  renderizarGastosPorTipo('funcionario');
+  renderizarGastosPorTipo('entregador');
+  renderizarRanking('funcionario');
+  renderizarRanking('entregador');
+}
+
+function popularSeletorDeAno() {
+  const select = document.getElementById('filtroAno');
+  if (select.dataset.preenchido) return;
+  const anos = new Set(cache.gastos.map((g) => (g.data || '').slice(0, 4)).filter(Boolean));
+  Array.from(anos).sort().reverse().forEach((ano) => select.appendChild(el('option', { value: ano, text: ano })));
+  select.dataset.preenchido = '1';
+}
+
+function filtrarAno(valor) {
+  filtro.ano = Number(valor);
+  recarregarGastosEResumo();
+}
+
+function filtrarMesSelect(valor) {
+  filtro.mes = Number(valor);
+  recarregarGastosEResumo();
+}
+
+/* =========================================================
+   DASHBOARD (Visão Geral)
+========================================================= */
+
+function kpiCard({ icone, tom, rotulo, valor, descricao }) {
+  return el('div', { class: 'kpi-card' }, [
+    el('div', { class: `kpi-icon tone-${tom}`, text: icone }),
+    el('span', { class: 'kpi-label', text: rotulo }),
+    el('div', { class: 'kpi-value', text: valor }),
+    descricao ? el('div', { class: 'kpi-desc', text: descricao }) : null,
+  ]);
+}
+
+function renderizarKpis(containerId, resumo) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  limparEPreencher(container, [
+    kpiCard({ icone: '⚠️', tom: 'danger', rotulo: 'Total pendente', valor: formatarMoeda(resumo.totalPendente), descricao: 'Valores em aberto' }),
+    kpiCard({ icone: '✅', tom: 'success', rotulo: 'Total pago', valor: formatarMoeda(resumo.totalPago), descricao: 'Valores quitados' }),
+    kpiCard({ icone: '💰', tom: 'accent', rotulo: 'Total movimentado', valor: formatarMoeda(resumo.totalMovimentado), descricao: 'Pago + pendente' }),
+    kpiCard({ icone: '🧑‍💼', tom: 'neutral', rotulo: 'Funcionários ativos', valor: String(resumo.totalFuncionarios), descricao: 'Cadastrados no sistema' }),
+    kpiCard({ icone: '🛵', tom: 'neutral', rotulo: 'Entregadores ativos', valor: String(resumo.totalEntregadores), descricao: 'Cadastrados no sistema' }),
+  ]);
+}
+
+function renderizarGraficoEmpresas(resumo) {
+  const container = document.getElementById('graficoEmpresas');
+  if (!container) return;
+
+  const entradas = Object.entries(resumo.totalPorEmpresa);
+  if (!entradas.length) {
+    limparEPreencher(container, [estadoVazio('Nenhum valor pendente no período.', '📊')]);
+    return;
+  }
+
+  const maior = Math.max(...entradas.map(([, v]) => v));
+  const linhas = entradas
+    .sort((a, b) => b[1] - a[1])
+    .map(([empresa, valor]) => el('div', { class: 'bar-row' }, [
+      el('span', { class: 'bar-row-label', text: empresa }),
+      el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill', style: `width:${maior ? (valor / maior) * 100 : 0}%` })),
+      el('span', { class: 'bar-row-value', text: formatarMoeda(valor) }),
+    ]));
+
+  limparEPreencher(container, [el('div', { class: 'bar-list' }, linhas)]);
+}
+
+function renderizarAlertas(resumo, gastos) {
+  const container = document.getElementById('alertasDashboard');
+  if (!container) return;
+
+  const semDescricao = gastos.filter((g) => !g.descricao || !g.descricao.trim()).length;
+  const pendentesCount = gastos.filter((g) => g.status === 'pendente').length;
+  const maiorFunc = resumo.rankingFuncionarios[0];
+  const maiorEnt = resumo.rankingEntregadores[0];
+  const maior = [maiorFunc, maiorEnt].filter(Boolean).sort((a, b) => b.total - a.total)[0];
+
+  const alertas = [];
+
+  if (pendentesCount > 0) {
+    alertas.push({ tom: 'info', icone: '⏳', titulo: `${pendentesCount} gasto(s) pendente(s)`, texto: `Total em aberto: ${formatarMoeda(resumo.totalPendente)}` });
+  }
+  if (maior) {
+    alertas.push({ tom: 'info', icone: '🔝', titulo: `Maior pendência: ${maior.nome}`, texto: formatarMoeda(maior.total) });
+  }
+  if (semDescricao > 0) {
+    alertas.push({ tom: 'warning', icone: '⚠️', titulo: `${semDescricao} gasto(s) sem descrição`, texto: 'Lançamentos antigos sem detalhe, difíceis de auditar depois.' });
+  }
+  if (!alertas.length) {
+    alertas.push({ tom: 'info', icone: '✅', titulo: 'Tudo em dia', texto: 'Nenhuma pendência encontrada para este período.' });
+  }
+
+  limparEPreencher(container, alertas.map((a) => el('div', { class: `insight-card tone-${a.tom}` }, [
+    el('span', { class: 'insight-icon', text: a.icone }),
+    el('div', { class: 'insight-text' }, [
+      el('strong', { text: a.titulo }),
+      el('span', { text: a.texto }),
+    ]),
+  ])));
+}
+
+function renderizarAtividadeRecente(gastos) {
+  const container = document.getElementById('atividadeRecente');
+  if (!container) return;
+
+  const recentes = gastos.slice(0, 8);
+  if (!recentes.length) {
+    limparEPreencher(container, [estadoVazio('Nenhuma movimentação registrada ainda.', '🕓')]);
+    return;
+  }
+
+  limparEPreencher(container, [el('div', { class: 'activity-list' }, recentes.map((g) => el('div', { class: 'activity-item' }, [
+    el('div', { class: 'activity-icon', text: g.tipo === 'Entregador' ? '🛵' : '🧑‍💼' }),
+    el('div', { class: 'activity-main' }, [
+      el('div', { class: 'activity-title', text: `${g.nome} • ${g.empresa || 'Açaí no Grau'}` }),
+      el('div', { class: 'activity-meta', text: `${g.descricao || 'Sem descrição'} — ${formatarData(g.data)}` }),
+    ]),
+    el('div', { class: 'activity-value', style: g.status === 'pendente' ? 'color:#fca5a5' : 'color:#86efac', text: formatarMoeda(g.valor) }),
+  ])))]);
+}
+
+function renderizarDashboard() {
+  renderizarKpis('kpiGrid', cache.resumo);
+  renderizarKpis('kpiGridRelatorio', cache.resumo);
+  renderizarGraficoEmpresas(cache.resumo);
+  renderizarAlertas(cache.resumo, cache.gastos);
+  renderizarAtividadeRecente(cache.gastos);
+}
+
+/* =========================================================
+   FUNCIONÁRIOS (módulo isolado)
+========================================================= */
+
+const tabelaFuncionarios = criarTabela({
+  container: document.getElementById('tabelaFuncionarios'),
+  vazio: 'Nenhum funcionário cadastrado ainda.',
+  iconeVazio: '🧑‍💼',
+  colunas: [
+    colunaTexto('nome', 'Nome', { classe: 'cell-strong' }),
+    colunaTexto('usuario', 'Usuário', { classe: 'cell-muted' }),
+    colunaAcoes((funcionario) => [
+      { label: 'Editar', onClick: () => editarFuncionario(funcionario) },
+      { label: 'Excluir', perigo: true, onClick: () => excluirFuncionario(funcionario) },
+    ]),
+  ],
+});
+
+function renderizarFuncionarios() {
+  tabelaFuncionarios.setDados(cache.funcionarios);
+}
+
+function renderizarSelectPessoas() {
+  const selectFunc = document.getElementById('funcionarioGastoSelect');
+  const selectEnt = document.getElementById('entregadorGastoSelect');
+
+  limparEPreencher(selectFunc, cache.funcionarios.length
+    ? cache.funcionarios.map((f) => el('option', { value: f.id, text: f.nome }))
+    : [el('option', { value: '', text: 'Nenhum funcionário cadastrado' })]);
+
+  limparEPreencher(selectEnt, cache.entregadores.length
+    ? cache.entregadores.map((eItem) => el('option', { value: eItem.id, text: eItem.nome }))
+    : [el('option', { value: '', text: 'Nenhum entregador cadastrado' })]);
+}
+
+async function abrirModalNovoFuncionario() {
   const valores = await Modal.formulario({
-    titulo: '⚠️ Resetar sistema',
-    avisoPerigo: `Isso apaga TODOS os gastos cadastrados (${cacheGastos.length} registros). Um backup em JSON é salvo no servidor antes de apagar, mas a ação não pode ser desfeita pela tela.`,
+    titulo: 'Novo funcionário',
+    subtitulo: 'Cria um acesso para o funcionário consultar os próprios gastos.',
     campos: [
-      { nome: 'senha', label: 'Sua senha de admin', tipo: 'password' },
-      { nome: 'confirmacao', label: `Digite "${FRASE}" para confirmar` },
+      { nome: 'nome', label: 'Nome completo', obrigatorio: true },
+      { nome: 'usuario', label: 'Usuário de acesso', obrigatorio: true },
+      { nome: 'senha', label: 'Senha', tipo: 'password', obrigatorio: true, dica: 'Mínimo de 6 caracteres.' },
     ],
-    textoConfirmar: 'Apagar tudo',
+    textoConfirmar: 'Cadastrar',
   });
-
   if (!valores) return;
 
   try {
-    const resultado = await Api.del('/resetar-sistema', valores);
-    Toast.sucesso(`Sistema resetado. Backup salvo em backups/${resultado.backup}.`);
-    carregarGastos();
-  } catch (erro) {
-    Toast.erro(erro.message);
-  }
-}
-
-/* =========================================================
-   FUNCIONÁRIOS
-========================================================= */
-
-async function cadastrarFuncionario() {
-  const nome = document.getElementById('nomeFuncionario').value;
-  const usuario = document.getElementById('usuarioFuncionario').value;
-  const senha = document.getElementById('senhaFuncionario').value;
-
-  try {
-    await Api.post('/funcionarios', { nome, usuario, senha });
-
+    await Api.post('/funcionarios', valores);
     Toast.sucesso('Funcionário cadastrado.');
-    document.getElementById('nomeFuncionario').value = '';
-    document.getElementById('usuarioFuncionario').value = '';
-    document.getElementById('senhaFuncionario').value = '';
-
-    carregarFuncionarios();
+    cache.funcionarios = await Api.get('/funcionarios');
+    renderizarFuncionarios();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -375,18 +707,19 @@ async function editarFuncionario(funcionario) {
   const valores = await Modal.formulario({
     titulo: 'Editar funcionário',
     campos: [
-      { nome: 'nome', label: 'Nome', valor: funcionario.nome },
-      { nome: 'usuario', label: 'Usuário', valor: funcionario.usuario },
-      { nome: 'senha', label: 'Nova senha (deixe em branco para manter)', tipo: 'password' },
+      { nome: 'nome', label: 'Nome', valor: funcionario.nome, obrigatorio: true },
+      { nome: 'usuario', label: 'Usuário', valor: funcionario.usuario, obrigatorio: true },
+      { nome: 'senha', label: 'Nova senha (opcional)', tipo: 'password', dica: 'Deixe em branco para manter a senha atual.' },
     ],
   });
-
   if (!valores) return;
 
   try {
     await Api.put(`/funcionarios/${funcionario.id}`, valores);
     Toast.sucesso('Funcionário atualizado.');
-    carregarFuncionarios();
+    cache.funcionarios = await Api.get('/funcionarios');
+    renderizarFuncionarios();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -395,7 +728,7 @@ async function editarFuncionario(funcionario) {
 async function excluirFuncionario(funcionario) {
   const ok = await Modal.confirmar({
     titulo: 'Excluir funcionário',
-    mensagem: `Deseja excluir "${funcionario.nome}"? Isso só é possível se não houver gastos vinculados a ele.`,
+    mensagem: `Deseja excluir "${funcionario.nome}"? Só é possível se não houver gastos vinculados a ele.`,
     textoConfirmar: 'Excluir',
     perigo: true,
   });
@@ -404,82 +737,55 @@ async function excluirFuncionario(funcionario) {
   try {
     await Api.del(`/funcionarios/${funcionario.id}`);
     Toast.sucesso('Funcionário excluído.');
-    carregarFuncionarios();
+    cache.funcionarios = await Api.get('/funcionarios');
+    renderizarFuncionarios();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
 }
 
-let cacheFuncionarios = [];
-
-async function carregarFuncionarios() {
-  const dados = await Api.get('/funcionarios');
-  cacheFuncionarios = dados;
-
-  renderizarListaFuncionarios(dados);
-  renderizarSelectFuncionarios(dados);
-
-  const totalFunc = document.getElementById('totalFuncionarios');
-  if (totalFunc) totalFunc.innerText = dados.length;
-}
-
-// Só a lista (<ul>) — usada também pelo filtro de busca. Importante:
-// o <select> de "Adicionar Gasto" é populado à parte (ver
-// renderizarSelectFuncionarios) e nunca deve refletir o filtro de busca,
-// senão digitar no campo de busca faria funcionários "somem" do
-// formulário de lançar gasto.
-function renderizarListaFuncionarios(dados) {
-  const lista = document.getElementById('listaFuncionarios');
-  if (!lista) return;
-
-  if (!dados.length) {
-    limparEPreencher(lista, [estadoVazio('Nenhum funcionário encontrado.')]);
-    return;
-  }
-
-  limparEPreencher(lista, dados.map((funcionario) => el('li', {}, [
-    `${funcionario.nome} - @${funcionario.usuario}`,
-    el('div', { class: 'acoes-botoes' }, [
-      el('button', { onclick: () => editarFuncionario(funcionario), text: 'Editar' }),
-      el('button', { onclick: () => excluirFuncionario(funcionario), text: 'Excluir' }),
-    ]),
-  ])));
-}
-
-function renderizarSelectFuncionarios(dados) {
-  const select = document.getElementById('funcionarioSelect');
-  if (!select) return;
-
-  limparEPreencher(select, dados.map((funcionario) =>
-    el('option', { value: funcionario.id, text: `Funcionário - ${funcionario.nome}` })
-  ));
-  // Entregadores são adicionados em seguida por carregarEntregadores().
-}
-
-function filtrarFuncionarios() {
-  const termo = (document.getElementById('buscarFuncionario').value || '').toLowerCase();
-  const filtrados = cacheFuncionarios.filter((f) => f.nome.toLowerCase().includes(termo) || f.usuario.toLowerCase().includes(termo));
-  renderizarListaFuncionarios(filtrados);
-}
-
 /* =========================================================
-   ENTREGADORES
+   ENTREGADORES (módulo isolado)
 ========================================================= */
 
-async function cadastrarEntregador() {
-  const nome = document.getElementById('nomeEntregador').value;
-  const usuario = document.getElementById('usuarioEntregador').value;
-  const senha = document.getElementById('senhaEntregador').value;
+const tabelaEntregadores = criarTabela({
+  container: document.getElementById('tabelaEntregadores'),
+  vazio: 'Nenhum entregador cadastrado ainda.',
+  iconeVazio: '🛵',
+  colunas: [
+    colunaTexto('nome', 'Nome', { classe: 'cell-strong' }),
+    colunaTexto('usuario', 'Usuário', { classe: 'cell-muted' }),
+    colunaAcoes((entregador) => [
+      { label: 'Editar', onClick: () => editarEntregador(entregador) },
+      { label: 'Excluir', perigo: true, onClick: () => excluirEntregador(entregador) },
+    ]),
+  ],
+});
+
+function renderizarEntregadores() {
+  tabelaEntregadores.setDados(cache.entregadores);
+}
+
+async function abrirModalNovoEntregador() {
+  const valores = await Modal.formulario({
+    titulo: 'Novo entregador',
+    subtitulo: 'Cria um acesso para o entregador consultar os próprios gastos.',
+    campos: [
+      { nome: 'nome', label: 'Nome completo', obrigatorio: true },
+      { nome: 'usuario', label: 'Usuário de acesso', obrigatorio: true },
+      { nome: 'senha', label: 'Senha', tipo: 'password', obrigatorio: true, dica: 'Mínimo de 6 caracteres.' },
+    ],
+    textoConfirmar: 'Cadastrar',
+  });
+  if (!valores) return;
 
   try {
-    await Api.post('/entregadores', { nome, usuario, senha });
-
+    await Api.post('/entregadores', valores);
     Toast.sucesso('Entregador cadastrado.');
-    document.getElementById('nomeEntregador').value = '';
-    document.getElementById('usuarioEntregador').value = '';
-    document.getElementById('senhaEntregador').value = '';
-
-    carregarEntregadores();
+    cache.entregadores = await Api.get('/entregadores');
+    renderizarEntregadores();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -489,18 +795,19 @@ async function editarEntregador(entregador) {
   const valores = await Modal.formulario({
     titulo: 'Editar entregador',
     campos: [
-      { nome: 'nome', label: 'Nome', valor: entregador.nome },
-      { nome: 'usuario', label: 'Usuário', valor: entregador.usuario },
-      { nome: 'senha', label: 'Nova senha (deixe em branco para manter)', tipo: 'password' },
+      { nome: 'nome', label: 'Nome', valor: entregador.nome, obrigatorio: true },
+      { nome: 'usuario', label: 'Usuário', valor: entregador.usuario, obrigatorio: true },
+      { nome: 'senha', label: 'Nova senha (opcional)', tipo: 'password', dica: 'Deixe em branco para manter a senha atual.' },
     ],
   });
-
   if (!valores) return;
 
   try {
     await Api.put(`/entregadores/${entregador.id}`, valores);
     Toast.sucesso('Entregador atualizado.');
-    carregarEntregadores();
+    cache.entregadores = await Api.get('/entregadores');
+    renderizarEntregadores();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -509,7 +816,7 @@ async function editarEntregador(entregador) {
 async function excluirEntregador(entregador) {
   const ok = await Modal.confirmar({
     titulo: 'Excluir entregador',
-    mensagem: `Deseja excluir "${entregador.nome}"? Isso só é possível se não houver gastos vinculados a ele.`,
+    mensagem: `Deseja excluir "${entregador.nome}"? Só é possível se não houver gastos vinculados a ele.`,
     textoConfirmar: 'Excluir',
     perigo: true,
   });
@@ -518,65 +825,102 @@ async function excluirEntregador(entregador) {
   try {
     await Api.del(`/entregadores/${entregador.id}`);
     Toast.sucesso('Entregador excluído.');
-    carregarEntregadores();
+    cache.entregadores = await Api.get('/entregadores');
+    renderizarEntregadores();
+    renderizarSelectPessoas();
   } catch (erro) {
     Toast.erro(erro.message);
   }
 }
 
-async function carregarEntregadores() {
-  const dados = await Api.get('/entregadores');
-  const lista = document.getElementById('listaEntregadores');
-  const select = document.getElementById('funcionarioSelect');
-
-  if (lista) {
-    if (!dados.length) {
-      limparEPreencher(lista, [estadoVazio('Nenhum entregador cadastrado ainda.')]);
-    } else {
-      limparEPreencher(lista, dados.map((entregador) => el('li', {}, [
-        `${entregador.nome} - @${entregador.usuario}`,
-        el('div', { class: 'acoes-botoes' }, [
-          el('button', { onclick: () => editarEntregador(entregador), text: 'Editar' }),
-          el('button', { onclick: () => excluirEntregador(entregador), text: 'Excluir' }),
-        ]),
-      ])));
-    }
-  }
-
-  if (select) {
-    dados.forEach((entregador) => {
-      select.appendChild(el('option', { value: `entregador-${entregador.id}`, text: `Entregador - ${entregador.nome}` }));
-    });
-  }
-}
-
 /* =========================================================
-   GASTOS
+   GASTOS — separados por tipo (funcionário / entregador)
+   Antes existia UMA lista misturando os dois; agora cada módulo só
+   enxerga (e só pode mexer) nos gastos do seu próprio tipo.
 ========================================================= */
 
-async function adicionarGasto() {
-  const selecionado = document.getElementById('funcionarioSelect').value;
-  let funcionario_id = null;
-  let entregador_id = null;
+const rotuloTipo = { funcionario: 'Funcionário', entregador: 'Entregador' };
 
-  if (selecionado.includes('entregador-')) {
-    entregador_id = selecionado.replace('entregador-', '');
-  } else {
-    funcionario_id = selecionado;
+const tabelasGastos = {
+  funcionario: criarTabela({
+    container: document.getElementById('tabelaGastosFuncionario'),
+    vazio: 'Nenhum débito de funcionário neste período.',
+    iconeVazio: '💳',
+    colunas: colunasGasto('funcionario'),
+  }),
+  entregador: criarTabela({
+    container: document.getElementById('tabelaGastosEntregador'),
+    vazio: 'Nenhum débito de entregador neste período.',
+    iconeVazio: '💳',
+    colunas: colunasGasto('entregador'),
+  }),
+};
+
+function colunasGasto(tipo) {
+  return [
+    {
+      chave: '_check', titulo: '', sortavel: false,
+      render: (g) => el('td', {}, el('input', {
+        type: 'checkbox', class: 'gasto-checkbox',
+        checked: selecao[tipo].includes(g.id) || undefined,
+        onchange: () => toggleSelecionarGasto(tipo, g.id),
+      })),
+    },
+    colunaTexto('nome', 'Nome', { classe: 'cell-strong' }),
+    colunaTexto('empresa', 'Empresa', { classe: 'cell-muted' }),
+    {
+      chave: 'valor', titulo: 'Valor', sortavel: true,
+      valorOrdenacao: (g) => Number(g.valor) || 0,
+      render: (g) => el('td', { class: 'cell-num' }, formatarMoeda(g.valor)),
+    },
+    colunaTexto('descricao', 'Descrição', { sortavel: false }),
+    colunaStatus('status'),
+    {
+      chave: 'data', titulo: 'Data', sortavel: true,
+      valorOrdenacao: (g) => g.data,
+      render: (g) => el('td', { class: 'cell-muted' }, formatarData(g.data)),
+    },
+    colunaAcoes((g) => {
+      const acoes = [];
+      if (g.status === 'pendente') acoes.push({ label: 'Marcar como pago', onClick: () => marcarPago(g.id) });
+      acoes.push({ label: 'Editar', onClick: () => editarGasto(g) });
+      acoes.push({ label: 'Excluir', perigo: true, onClick: () => removerGasto(g.id) });
+      return acoes;
+    }),
+  ];
+}
+
+function gastosPorTipo(tipo) {
+  return cache.gastos.filter((g) => g.tipo === rotuloTipo[tipo]);
+}
+
+function renderizarGastosPorTipo(tipo) {
+  tabelasGastos[tipo].setDados(gastosPorTipo(tipo));
+  atualizarInterfaceSelecao(tipo);
+}
+
+async function adicionarGasto(tipo) {
+  const prefixo = tipo === 'funcionario' ? 'Funcionario' : 'Entregador';
+  const pessoaId = document.getElementById(`${tipo}GastoSelect`).value;
+  const empresa = document.getElementById(`empresaGasto${prefixo}`).value;
+  const valor = document.getElementById(`valorGasto${prefixo}`).value;
+  const descricao = document.getElementById(`descricaoGasto${prefixo}`).value;
+
+  if (!pessoaId) {
+    Toast.erro(`Cadastre um ${rotuloTipo[tipo].toLowerCase()} antes de lançar um débito.`);
+    return;
   }
 
-  const valor = document.getElementById('valorGasto').value;
-  const descricao = document.getElementById('descricaoGasto').value;
-  const empresa = document.getElementById('empresaGasto').value;
+  const corpo = tipo === 'funcionario'
+    ? { funcionario_id: pessoaId, entregador_id: null, valor, descricao, empresa }
+    : { funcionario_id: null, entregador_id: pessoaId, valor, descricao, empresa };
 
   try {
-    await Api.post('/gastos', { funcionario_id, entregador_id, valor, descricao, empresa });
-
-    Toast.sucesso('Gasto adicionado.');
-    document.getElementById('valorGasto').value = '';
-    document.getElementById('descricaoGasto').value = '';
-
-    carregarGastos();
+    await Api.post('/gastos', corpo);
+    Toast.sucesso('Débito adicionado.');
+    document.getElementById(`valorGasto${prefixo}`).value = '';
+    document.getElementById(`descricaoGasto${prefixo}`).value = '';
+    await recarregarGastosEResumo();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -584,19 +928,18 @@ async function adicionarGasto() {
 
 async function editarGasto(gasto) {
   const valores = await Modal.formulario({
-    titulo: 'Editar gasto',
+    titulo: 'Editar débito',
     campos: [
-      { nome: 'valor', label: 'Valor', valor: String(gasto.valor), tipo: 'number' },
-      { nome: 'descricao', label: 'Descrição', valor: gasto.descricao },
+      { nome: 'valor', label: 'Valor', valor: String(gasto.valor), tipo: 'number', obrigatorio: true },
+      { nome: 'descricao', label: 'Descrição', valor: gasto.descricao, obrigatorio: true },
     ],
   });
-
   if (!valores) return;
 
   try {
     await Api.put(`/gastos/${gasto.id}`, valores);
-    Toast.sucesso('Gasto atualizado.');
-    carregarGastos();
+    Toast.sucesso('Débito atualizado.');
+    await recarregarGastosEResumo();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -605,7 +948,7 @@ async function editarGasto(gasto) {
 async function marcarPago(id) {
   try {
     await Api.put(`/gastos/${id}/pago`);
-    carregarGastos();
+    await recarregarGastosEResumo();
   } catch (erro) {
     Toast.erro(erro.message);
   }
@@ -613,8 +956,8 @@ async function marcarPago(id) {
 
 async function removerGasto(id) {
   const ok = await Modal.confirmar({
-    titulo: 'Excluir gasto',
-    mensagem: 'Deseja excluir este gasto? Essa ação não pode ser desfeita.',
+    titulo: 'Excluir débito',
+    mensagem: 'Deseja excluir este débito? Essa ação não pode ser desfeita.',
     textoConfirmar: 'Excluir',
     perigo: true,
   });
@@ -622,201 +965,84 @@ async function removerGasto(id) {
 
   try {
     await Api.del(`/gastos/${id}`);
-    carregarGastos();
+    await recarregarGastosEResumo();
   } catch (erro) {
     Toast.erro(erro.message);
   }
 }
 
-/* ---------- Seleção em lote ---------- */
+/* ---------- Seleção em lote (por tipo) ---------- */
 
-function toggleSelecionarGasto(id) {
-  const index = gastosSelecionados.indexOf(id);
-  if (index > -1) gastosSelecionados.splice(index, 1);
-  else gastosSelecionados.push(id);
-  atualizarInterfaceSelecao();
+function toggleSelecionarGasto(tipo, id) {
+  const lista = selecao[tipo];
+  const index = lista.indexOf(id);
+  if (index > -1) lista.splice(index, 1);
+  else lista.push(id);
+  atualizarInterfaceSelecao(tipo);
 }
 
-function atualizarInterfaceSelecao() {
-  const contador = document.getElementById('contadorSelecionados');
-  const acoes = document.getElementById('acoesLote');
-  const selecionarTodos = document.getElementById('selecionarTodos');
+function atualizarInterfaceSelecao(tipo) {
+  const sufixo = tipo === 'funcionario' ? 'Funcionario' : 'Entregador';
+  const contador = document.getElementById(`contador${sufixo}`);
+  const acoes = document.getElementById(`acoesLote${sufixo}`);
+  const selecionarTodos = document.getElementById(`selecionarTodos${sufixo}`);
 
-  if (contador) contador.innerText = `${gastosSelecionados.length} selecionado(s)`;
-  if (acoes) acoes.classList.toggle('hidden', gastosSelecionados.length === 0);
+  if (contador) contador.innerText = `${selecao[tipo].length} selecionado(s)`;
+  if (acoes) acoes.classList.toggle('hidden', selecao[tipo].length === 0);
 
-  const checkboxes = document.querySelectorAll('.gasto-checkbox');
-  if (selecionarTodos) {
-    selecionarTodos.checked = checkboxes.length > 0 && gastosSelecionados.length === checkboxes.length;
-  }
-
-  document.querySelectorAll('.gasto-item').forEach((item) => {
-    const id = Number(item.getAttribute('data-id'));
-    item.classList.toggle('gasto-selecionado', gastosSelecionados.includes(id));
-  });
+  const totalNaTela = gastosPorTipo(tipo).length;
+  if (selecionarTodos) selecionarTodos.checked = totalNaTela > 0 && selecao[tipo].length === totalNaTela;
 }
 
-function toggleSelecionarTodos() {
-  const checkboxes = document.querySelectorAll('.gasto-checkbox');
-  const selecionarTodos = document.getElementById('selecionarTodos');
-
-  if (selecionarTodos.checked) {
-    gastosSelecionados = Array.from(checkboxes, (cb) => Number(cb.value));
-    checkboxes.forEach((cb) => { cb.checked = true; });
-  } else {
-    checkboxes.forEach((cb) => { cb.checked = false; });
-    gastosSelecionados = [];
-  }
-
-  atualizarInterfaceSelecao();
+function toggleSelecionarTodos(tipo) {
+  const sufixo = tipo === 'funcionario' ? 'Funcionario' : 'Entregador';
+  const marcado = document.getElementById(`selecionarTodos${sufixo}`).checked;
+  selecao[tipo] = marcado ? gastosPorTipo(tipo).map((g) => g.id) : [];
+  renderizarGastosPorTipo(tipo);
 }
 
-async function marcarSelecionadosComoPagos() {
-  if (!gastosSelecionados.length) return;
+async function marcarSelecionadosComoPagos(tipo) {
+  if (!selecao[tipo].length) return;
 
   const ok = await Modal.confirmar({
     titulo: 'Marcar como pagos',
-    mensagem: `Deseja marcar ${gastosSelecionados.length} gasto(s) como pagos?`,
+    mensagem: `Deseja marcar ${selecao[tipo].length} débito(s) como pagos?`,
     textoConfirmar: 'Marcar como pagos',
   });
   if (!ok) return;
 
-  await Promise.all(gastosSelecionados.map((id) => Api.put(`/gastos/${id}/pago`)));
-
-  gastosSelecionados = [];
-  carregarGastos();
-  Toast.sucesso('Gastos marcados como pagos.');
+  await Promise.all(selecao[tipo].map((id) => Api.put(`/gastos/${id}/pago`)));
+  selecao[tipo] = [];
+  await recarregarGastosEResumo();
+  Toast.sucesso('Débitos marcados como pagos.');
 }
 
-async function excluirSelecionados() {
-  if (!gastosSelecionados.length) return;
+async function excluirSelecionados(tipo) {
+  if (!selecao[tipo].length) return;
 
   const ok = await Modal.confirmar({
-    titulo: 'Excluir gastos selecionados',
-    mensagem: `Deseja excluir ${gastosSelecionados.length} gasto(s)? Essa ação não pode ser desfeita.`,
+    titulo: 'Excluir débitos selecionados',
+    mensagem: `Deseja excluir ${selecao[tipo].length} débito(s)? Essa ação não pode ser desfeita.`,
     textoConfirmar: 'Excluir',
     perigo: true,
   });
   if (!ok) return;
 
-  await Promise.all(gastosSelecionados.map((id) => Api.del(`/gastos/${id}`)));
-
-  gastosSelecionados = [];
-  carregarGastos();
-  Toast.sucesso('Gastos excluídos.');
+  await Promise.all(selecao[tipo].map((id) => Api.del(`/gastos/${id}`)));
+  selecao[tipo] = [];
+  await recarregarGastosEResumo();
+  Toast.sucesso('Débitos excluídos.');
 }
 
-/* ---------- Listagem / dashboard ---------- */
-
-function popularSeletorDeAno(gastos) {
-  const select = document.getElementById('filtroAno');
-  if (!select || select.dataset.preenchido) return;
-
-  const anos = new Set(gastos.map((g) => (g.data || '').slice(0, 4)).filter(Boolean));
-  Array.from(anos).sort().reverse().forEach((ano) => {
-    select.appendChild(el('option', { value: ano, text: ano }));
-  });
-
-  select.dataset.preenchido = '1';
-}
-
-function renderizarSkeleton(container, quantidade = 4) {
-  if (!container) return;
-  container.innerHTML = '';
-  for (let i = 0; i < quantidade; i += 1) {
-    container.appendChild(el('div', { class: 'skeleton' }));
-  }
-}
-
-async function carregarGastos() {
-  gastosSelecionados = [];
-
-  const lista = document.getElementById('listaGastos');
-  renderizarSkeleton(lista);
-
-  const [gastosSemFiltro, resumo] = await Promise.all([
-    // usado só para descobrir quais anos existem e popular o seletor
-    cacheGastos.length ? Promise.resolve(cacheGastos) : Api.get('/admin/gastos'),
-    Api.get(`/admin/relatorios/resumo${queryStringFiltro()}`),
-  ]);
-
-  cacheGastos = gastosSemFiltro;
-  popularSeletorDeAno(gastosSemFiltro);
-
-  const gastosFiltrados = await Api.get(`/admin/gastos${queryStringFiltro()}`);
-
-  renderizarListaGastos(gastosFiltrados);
-  renderizarDashboardAdmin(resumo);
-  renderizarRankings(resumo);
-}
-
-function renderizarListaGastos(gastos) {
-  const lista = document.getElementById('listaGastos');
-  if (!lista) return;
-
-  if (!gastos.length) {
-    limparEPreencher(lista, [estadoVazio('Nenhum gasto encontrado para este período.')]);
-    atualizarInterfaceSelecao();
-    return;
-  }
-
-  limparEPreencher(lista, gastos.map((gasto) => {
-    const valor = Number(gasto.valor) || 0;
-
-    const checkbox = el('input', {
-      type: 'checkbox',
-      class: 'gasto-checkbox',
-      value: gasto.id,
-      onchange: () => toggleSelecionarGasto(gasto.id),
-    });
-
-    const botoes = [];
-    if (gasto.status === 'pendente') {
-      botoes.push(el('button', { class: 'action-btn', onclick: () => marcarPago(gasto.id), text: 'Marcar Pago' }));
-    }
-    botoes.push(el('button', { class: 'action-btn', onclick: () => editarGasto(gasto), text: 'Editar' }));
-    botoes.push(el('button', { class: 'action-btn', onclick: () => removerGasto(gasto.id), text: 'Excluir' }));
-
-    return el('li', { class: 'gasto-item', 'data-id': gasto.id, 'data-nome': gasto.nome.toLowerCase() }, [
-      el('div', { class: 'gasto-checkbox-area' }, [
-        checkbox,
-        el('div', { class: 'gasto-conteudo' }, [
-          el('div', { class: 'gasto-topo' }, [
-            el('div', {}, [
-              el('strong', { text: gasto.nome }),
-              el('div', { class: 'gasto-info', text: `${gasto.tipo || 'Funcionário'} • ${gasto.empresa || 'Açaí no Grau'}` }),
-            ]),
-            el('span', { class: `status ${gasto.status}`, text: gasto.status }),
-          ]),
-          el('div', { class: 'gasto-valor', text: formatarMoeda(valor) }),
-          el('div', { class: 'gasto-descricao', text: gasto.descricao || '(sem descrição)' }),
-          el('div', { class: 'gasto-data', text: formatarData(gasto.data) }),
-          el('div', { class: 'gasto-acoes' }, botoes),
-        ]),
-      ]),
-    ]);
-  }));
-
-  atualizarInterfaceSelecao();
-}
-
-function renderizarDashboardAdmin(resumo) {
-  const totalGeral = document.getElementById('totalGeral');
-  const totalPagoEl = document.getElementById('totalPago');
-  const totalMovimentadoEl = document.getElementById('totalMovimentado');
-
-  if (totalGeral) totalGeral.innerText = formatarMoeda(resumo.totalPendente);
-  if (totalPagoEl) totalPagoEl.innerText = formatarMoeda(resumo.totalPago);
-  if (totalMovimentadoEl) totalMovimentadoEl.innerText = formatarMoeda(resumo.totalMovimentado);
-}
+/* =========================================================
+   RANKING (por módulo)
+========================================================= */
 
 function cardRanking(item) {
-  const empresas = Object.entries(item.porEmpresa).map(([empresa, valor]) =>
-    el('div', { class: 'empresa-divida' }, [
-      el('span', { class: 'empresa-titulo', text: empresa }),
-      el('span', { class: 'empresa-valor', text: formatarMoeda(valor) }),
-    ])
-  );
+  const empresas = Object.entries(item.porEmpresa).map(([empresa, valor]) => el('div', { class: 'empresa-divida' }, [
+    el('span', { class: 'empresa-titulo', text: empresa }),
+    el('span', { class: 'empresa-valor', text: formatarMoeda(valor) }),
+  ]));
 
   return el('div', { class: 'ranking-entregador-card' }, [
     el('div', { class: 'ranking-entregador-topo' }, [
@@ -827,76 +1053,47 @@ function cardRanking(item) {
   ]);
 }
 
-function renderizarRankings(resumo) {
-  const listaRanking = document.getElementById('ranking');
-  const listaRankingEntregadores = document.getElementById('rankingEntregadores');
+function renderizarRanking(tipo) {
+  if (!cache.resumo) return;
+  const containerId = tipo === 'funcionario' ? 'rankingFuncionarios' : 'rankingEntregadores';
+  const lista = tipo === 'funcionario' ? cache.resumo.rankingFuncionarios : cache.resumo.rankingEntregadores;
+  const container = document.getElementById(containerId);
 
-  if (listaRanking) {
-    limparEPreencher(
-      listaRanking,
-      resumo.rankingFuncionarios.length
-        ? resumo.rankingFuncionarios.map(cardRanking)
-        : [estadoVazio('Nenhuma pendência de funcionário neste período.')]
-    );
-  }
-
-  if (listaRankingEntregadores) {
-    limparEPreencher(
-      listaRankingEntregadores,
-      resumo.rankingEntregadores.length
-        ? resumo.rankingEntregadores.map(cardRanking)
-        : [estadoVazio('Nenhuma pendência de entregador neste período.')]
-    );
-  }
-}
-
-function filtrarGastos() {
-  const texto = (document.getElementById('buscarGasto').value || '').toLowerCase();
-  document.querySelectorAll('.gasto-item').forEach((item) => {
-    const nome = item.getAttribute('data-nome');
-    item.style.display = nome.includes(texto) ? 'flex' : 'none';
-  });
+  limparEPreencher(container, lista.length
+    ? lista.map(cardRanking)
+    : [estadoVazio(`Nenhuma pendência de ${rotuloTipo[tipo].toLowerCase()} neste período.`, '🏆')]);
 }
 
 /* =========================================================
-   FILTRO DE PERÍODO (ano + mês)
+   RESET DO SISTEMA
 ========================================================= */
 
-function filtrarMes(mes, event) {
-  filtro.mes = mes;
+async function resetarSistema() {
+  const FRASE = 'APAGAR TUDO';
 
-  document.querySelectorAll('.mes-btn').forEach((btn) => btn.classList.remove('active'));
-  if (event && event.target) event.target.classList.add('active');
+  const valores = await Modal.formulario({
+    titulo: '⚠️ Resetar sistema',
+    avisoPerigo: `Isso apaga TODOS os gastos cadastrados (${cache.gastos.length} registros carregados). Um backup em JSON é salvo no servidor antes de apagar, mas a ação não pode ser desfeita pela tela.`,
+    campos: [
+      { nome: 'senha', label: 'Sua senha de admin', tipo: 'password', obrigatorio: true },
+      { nome: 'confirmacao', label: `Digite "${FRASE}" para confirmar`, obrigatorio: true },
+    ],
+    textoConfirmar: 'Apagar tudo',
+  });
+  if (!valores) return;
 
-  carregarGastos();
-}
-
-function filtrarAno(ano) {
-  filtro.ano = Number(ano);
-  carregarGastos();
+  try {
+    const resultado = await Api.del('/resetar-sistema', valores);
+    Toast.sucesso(`Sistema resetado. Backup salvo em backups/${resultado.backup}.`);
+    await recarregarGastosEResumo();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
 }
 
 /* =========================================================
-   PDF
+   RELATÓRIOS PDF
 ========================================================= */
-
-async function gerarPDF() {
-  const escolha = await Modal.confirmar({
-    titulo: 'Relatório em PDF',
-    mensagem: 'Gerar o relatório financeiro completo (todas as pessoas e empresas) para o período selecionado?',
-    textoConfirmar: 'Gerar financeiro completo',
-  });
-
-  if (escolha) return gerarRelatorioFinanceiroCompleto();
-
-  const escolhaFuncionarios = await Modal.confirmar({
-    titulo: 'Relatório de funcionários',
-    mensagem: 'Deseja gerar o resumo apenas de funcionários (sem entregadores) para o período selecionado?',
-    textoConfirmar: 'Gerar resumo de funcionários',
-  });
-
-  if (escolhaFuncionarios) return gerarRelatorioFuncionarios();
-}
 
 async function gerarRelatorioFinanceiroCompleto() {
   const [gastos, resumo] = await Promise.all([
@@ -907,15 +1104,7 @@ async function gerarRelatorioFinanceiroCompleto() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape' });
 
-  const rows = gastos.map((g) => [
-    g.nome,
-    g.tipo || 'Funcionário',
-    g.empresa || 'Açaí no Grau',
-    formatarMoeda(g.valor),
-    g.descricao || '—',
-    g.status.toUpperCase(),
-    formatarData(g.data),
-  ]);
+  const rows = gastos.map((g) => [g.nome, g.tipo || 'Funcionário', g.empresa || 'Açaí no Grau', formatarMoeda(g.valor), g.descricao || '—', g.status.toUpperCase(), formatarData(g.data)]);
 
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 0, 300, 35, 'F');
@@ -984,84 +1173,72 @@ async function gerarRelatorioFinanceiroCompleto() {
   }
 
   doc.save('relatorio-financeiro.pdf');
+  Toast.sucesso('Relatório financeiro gerado.');
 }
 
-async function gerarRelatorioFuncionarios() {
-  const resumo = await Api.get(`/admin/relatorios/resumo${queryStringFiltro()}`);
+function gerarRelatorioPorTipo(tipo, tituloArquivo, tituloDoc) {
+  return async () => {
+    const resumo = await Api.get(`/admin/relatorios/resumo${queryStringFiltro()}`);
+    const lista = tipo === 'funcionario' ? resumo.rankingFuncionarios : resumo.rankingEntregadores;
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
 
-  doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, 210, 30, 'F');
-  doc.setTextColor(255);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text('RELATÓRIO DE FUNCIONÁRIOS', 14, 20);
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 30, 'F');
+    doc.setTextColor(255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(tituloDoc, 14, 20);
 
-  let y = 45;
-  doc.setTextColor(0);
-  doc.setFontSize(11);
+    let y = 45;
+    doc.setTextColor(0);
+    doc.setFontSize(11);
 
-  if (!resumo.rankingFuncionarios.length) {
-    doc.text('Nenhuma pendência de funcionário neste período.', 14, y);
-  }
-
-  resumo.rankingFuncionarios.forEach((item) => {
-    if (y > 270) {
-      doc.addPage();
-      y = 20;
+    if (!lista.length) {
+      doc.text(`Nenhuma pendência de ${rotuloTipo[tipo].toLowerCase()} neste período.`, 14, y);
     }
 
-    doc.setFont('helvetica', 'bold');
-    doc.text(item.nome, 14, y);
-    y += 6;
+    lista.forEach((item) => {
+      if (y > 270) { doc.addPage(); y = 20; }
 
-    doc.setFont('helvetica', 'normal');
-    Object.entries(item.porEmpresa).forEach(([empresa, valor]) => {
-      doc.text(`${empresa}: ${formatarMoeda(valor)}`, 20, y);
+      doc.setFont('helvetica', 'bold');
+      doc.text(item.nome, 14, y);
       y += 6;
+
+      doc.setFont('helvetica', 'normal');
+      Object.entries(item.porEmpresa).forEach(([empresa, valor]) => {
+        doc.text(`${empresa}: ${formatarMoeda(valor)}`, 20, y);
+        y += 6;
+      });
+
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Total: ${formatarMoeda(item.total)}`, 20, y);
+      y += 12;
     });
 
-    doc.setFont('helvetica', 'bold');
-    doc.text(`Total: ${formatarMoeda(item.total)}`, 20, y);
-    y += 12;
-  });
+    doc.setFontSize(10);
+    doc.setTextColor(120);
+    doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 285);
 
-  doc.setFontSize(10);
-  doc.setTextColor(120);
-  doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 285);
-
-  doc.save('relatorio-funcionarios.pdf');
+    doc.save(tituloArquivo);
+    Toast.sucesso('Relatório gerado.');
+  };
 }
+
+const gerarRelatorioFuncionarios = gerarRelatorioPorTipo('funcionario', 'relatorio-funcionarios.pdf', 'RELATÓRIO DE FUNCIONÁRIOS');
+const gerarRelatorioEntregadores = gerarRelatorioPorTipo('entregador', 'relatorio-entregadores.pdf', 'RELATÓRIO DE ENTREGADORES');
 
 /* =========================================================
-   PAINEL DO FUNCIONÁRIO / ENTREGADOR
+   PAINEL DO FUNCIONÁRIO / ENTREGADOR (login não-admin)
 ========================================================= */
 
-async function carregarMeusGastos() {
-  const lista = document.getElementById('meusGastos');
-  renderizarSkeleton(lista, 3);
+async function carregarPainelFuncionario() {
+  const container = document.getElementById('tabelaMeusGastos');
+  container.innerHTML = '';
+  container.appendChild(el('div', { class: 'skeleton' }));
+  container.appendChild(el('div', { class: 'skeleton' }));
 
-  const dados = await Api.get('/meus-gastos');
-
-  if (!dados.length) {
-    limparEPreencher(lista, [estadoVazio('Você ainda não tem gastos registrados.')]);
-    return;
-  }
-
-  limparEPreencher(lista, dados.map((gasto) => el('li', {}, [
-    el('div', { class: 'gasto-topo' }, [
-      el('strong', { text: gasto.empresa || 'Açaí no Grau' }),
-      el('span', { class: `status ${gasto.status}`, text: gasto.status }),
-    ]),
-    el('div', { class: 'gasto-valor', text: formatarMoeda(gasto.valor) }),
-    el('div', { class: 'gasto-descricao', text: gasto.descricao || '(sem descrição)' }),
-    el('div', { class: 'gasto-data', text: formatarData(gasto.data) }),
-  ])));
-}
-
-async function carregarMeuTotal() {
   const dados = await Api.get('/meus-gastos');
 
   let totalAcai = 0;
@@ -1072,25 +1249,34 @@ async function carregarMeuTotal() {
     if (gasto.status !== 'pendente') return;
     const valor = Number(gasto.valor) || 0;
     const empresa = (gasto.empresa || '').toLowerCase().trim();
-
     if (empresa.includes('açaí') || empresa.includes('acai')) totalAcai += valor;
     else if (empresa.includes('subway')) totalSubway += valor;
     else totalOutros += valor;
   });
 
-  const totalGeral = totalAcai + totalSubway + totalOutros;
+  limparEPreencher(document.getElementById('kpiGridFuncionario'), [
+    kpiCard({ icone: '🍧', tom: 'accent', rotulo: 'Total Açaí', valor: formatarMoeda(totalAcai) }),
+    kpiCard({ icone: '🥪', tom: 'accent', rotulo: 'Total Subway', valor: formatarMoeda(totalSubway) }),
+    kpiCard({ icone: '💰', tom: 'neutral', rotulo: 'Total geral pendente', valor: formatarMoeda(totalAcai + totalSubway + totalOutros) }),
+  ]);
 
-  const totalAcaiEl = document.getElementById('totalAcai');
-  const totalSubwayEl = document.getElementById('totalSubway');
-  const totalGeralEl = document.getElementById('meuTotal');
-
-  if (totalAcaiEl) totalAcaiEl.innerText = formatarMoeda(totalAcai);
-  if (totalSubwayEl) totalSubwayEl.innerText = formatarMoeda(totalSubway);
-  if (totalGeralEl) totalGeralEl.innerText = formatarMoeda(totalGeral);
+  const tabela = criarTabela({
+    container,
+    vazio: 'Você ainda não tem gastos registrados.',
+    iconeVazio: '🗂️',
+    colunas: [
+      colunaTexto('empresa', 'Empresa', { classe: 'cell-strong' }),
+      { chave: 'valor', titulo: 'Valor', sortavel: true, valorOrdenacao: (g) => Number(g.valor) || 0, render: (g) => el('td', { class: 'cell-num' }, formatarMoeda(g.valor)) },
+      colunaTexto('descricao', 'Descrição', { sortavel: false }),
+      colunaStatus('status'),
+      { chave: 'data', titulo: 'Data', sortavel: true, valorOrdenacao: (g) => g.data, render: (g) => el('td', { class: 'cell-muted' }, formatarData(g.data)) },
+    ],
+  });
+  tabela.setDados(dados);
 }
 
 /* =========================================================
-   NAVEGAÇÃO / VISUAL
+   VISUAL
 ========================================================= */
 
 function trocarLogo() {
@@ -1108,19 +1294,8 @@ function trocarLogo() {
   }
 }
 
-function trocarSecaoAdmin(secaoId, botaoClicado) {
-  document.querySelectorAll('.admin-section').forEach((secao) => secao.classList.remove('active-section'));
-  const secao = document.getElementById(secaoId);
-  if (secao) secao.classList.add('active-section');
-
-  document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.remove('active'));
-  if (botaoClicado) botaoClicado.classList.add('active');
-}
-
 /* =========================================================
    BOOT
 ========================================================= */
 
-document.addEventListener('DOMContentLoaded', () => {
-  Modal.init();
-});
+Modal.init();
