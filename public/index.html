@@ -216,11 +216,22 @@
           <div class="meses-card">
 
             <div>
-              <span>Filtrar por mês</span>
-              <p>Escolha um período para atualizar os totais do painel.</p>
+              <span>Filtrar por período</span>
+              <p>
+                Escolha ano e mês para atualizar os totais do painel.
+                <!-- Antes o filtro era só por mês, sem ano: em "Maio" ele
+                     somava maio de TODOS os anos juntos. Com o histórico
+                     ainda só em 2026 isso não apareceu, mas ia gerar
+                     relatórios errados assim que o sistema completasse
+                     um ano de uso. -->
+              </p>
             </div>
 
             <div class="meses-container">
+
+              <select id="filtroAno" class="filtro-ano" onchange="filtrarAno(this.value)">
+                <option value="0">Todos os anos</option>
+              </select>
 
               <button class="mes-btn active" onclick="filtrarMes(0, event)">Todos</button>
               <button class="mes-btn" onclick="filtrarMes(1, event)">Jan</button>
@@ -745,6 +756,15 @@
 
     </div>
 
+  </div>
+
+  <!-- Substituem alert()/confirm()/prompt(): bloqueiam a aba inteira do
+       navegador, não podem ser estilizados e travam em segundo plano.
+       Ver Toast/Modal em app.js. -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div id="modalBox" class="modal-box" role="dialog" aria-modal="true"></div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
