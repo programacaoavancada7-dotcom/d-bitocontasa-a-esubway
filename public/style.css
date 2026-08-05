@@ -813,6 +813,107 @@ table.data-table{
 input.gasto-checkbox,input.select-checkbox{width:16px; height:16px; height:auto; accent-color:var(--accent); cursor:pointer}
 
 /* =========================================================
+   DESEMPENHO (antes "ranking" — cartão com posição, avatar e barra
+   comparativa; antes era só nome + valor em texto puro)
+========================================================= */
+
+.desempenho-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:16px 18px;
+  margin-top:12px;
+  transition:border-color .15s ease;
+}
+.desempenho-card:first-child{margin-top:0}
+.desempenho-card:hover{border-color:var(--border-strong)}
+
+.desempenho-card.top1{border-color:rgba(250,204,21,.35); background:linear-gradient(180deg,rgba(250,204,21,.05),var(--surface))}
+.desempenho-card.top2{border-color:rgba(203,213,225,.3)}
+.desempenho-card.top3{border-color:rgba(217,119,6,.3)}
+
+.desempenho-topo{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.desempenho-rank{
+  width:26px; height:26px;
+  border-radius:999px;
+  background:var(--surface-2);
+  color:var(--text-tertiary);
+  display:flex; align-items:center; justify-content:center;
+  font-size:var(--fs-xs);
+  font-weight:800;
+  flex-shrink:0;
+}
+
+.desempenho-rank.top1{background:#facc15; color:#1a1400}
+.desempenho-rank.top2{background:#cbd5e1; color:#0f172a}
+.desempenho-rank.top3{background:#d97706; color:#1a0f00}
+
+.desempenho-avatar{
+  width:34px; height:34px;
+  border-radius:999px;
+  background:var(--accent-soft);
+  color:var(--accent-text);
+  display:flex; align-items:center; justify-content:center;
+  font-size:var(--fs-xs);
+  font-weight:800;
+  flex-shrink:0;
+}
+
+.desempenho-nome{
+  flex:1;
+  min-width:80px;
+  font-size:var(--fs-md);
+  font-weight:700;
+}
+
+.desempenho-total{
+  font-size:var(--fs-lg);
+  font-weight:800;
+  white-space:nowrap;
+}
+
+.desempenho-bar-track{
+  height:8px;
+  border-radius:999px;
+  background:var(--surface-2);
+  overflow:hidden;
+  margin-top:14px;
+}
+
+.desempenho-bar-fill{
+  height:100%;
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--accent),var(--accent-hover));
+}
+
+.desempenho-chips{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:12px;
+}
+
+.desempenho-chip{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 10px;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  font-size:var(--fs-xs);
+}
+
+.desempenho-chip-label{color:var(--text-tertiary)}
+.desempenho-chip-valor{font-weight:700}
+
+/* =========================================================
    GRÁFICOS (SVG feitos à mão, sem biblioteca nova)
 ========================================================= */
 

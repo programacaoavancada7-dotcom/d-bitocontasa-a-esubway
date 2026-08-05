@@ -1035,21 +1035,37 @@ async function excluirSelecionados(tipo) {
 }
 
 /* =========================================================
-   RANKING (por módulo)
+   DESEMPENHO (por módulo — antes chamado "Ranking")
+   Antes o card só tinha nome + valor em texto puro (sem nenhum estilo
+   aplicado de verdade — as classes usadas nem existiam mais no CSS
+   depois do redesign). Agora tem posição, avatar com iniciais e uma
+   barra comparando com quem está no topo.
 ========================================================= */
 
-function cardRanking(item) {
-  const empresas = Object.entries(item.porEmpresa).map(([empresa, valor]) => el('div', { class: 'empresa-divida' }, [
-    el('span', { class: 'empresa-titulo', text: empresa }),
-    el('span', { class: 'empresa-valor', text: formatarMoeda(valor) }),
+function iniciaisDoNome(nome) {
+  const partes = (nome || '').trim().split(/\s+/).filter(Boolean);
+  const letras = partes.slice(0, 2).map((parte) => parte[0].toUpperCase());
+  return letras.join('') || '?';
+}
+
+function cardDesempenho(item, posicao, maiorValor) {
+  const classeTop = posicao <= 3 ? `top${posicao}` : '';
+  const proporcao = maiorValor ? Math.max(4, (item.total / maiorValor) * 100) : 0;
+
+  const chips = Object.entries(item.porEmpresa).map(([empresa, valor]) => el('div', { class: 'desempenho-chip' }, [
+    el('span', { class: 'desempenho-chip-label', text: empresa }),
+    el('span', { class: 'desempenho-chip-valor', text: formatarMoeda(valor) }),
   ]));
 
-  return el('div', { class: 'ranking-entregador-card' }, [
-    el('div', { class: 'ranking-entregador-topo' }, [
-      el('div', { class: 'ranking-entregador-nome', text: item.nome }),
-      el('div', { class: 'ranking-entregador-total', text: `Total: ${formatarMoeda(item.total)}` }),
+  return el('div', { class: `desempenho-card ${classeTop}` }, [
+    el('div', { class: 'desempenho-topo' }, [
+      el('div', { class: `desempenho-rank ${classeTop}`, text: `#${posicao}` }),
+      el('div', { class: 'desempenho-avatar', text: iniciaisDoNome(item.nome) }),
+      el('div', { class: 'desempenho-nome', text: item.nome }),
+      el('div', { class: 'desempenho-total', text: formatarMoeda(item.total) }),
     ]),
-    el('div', { class: 'ranking-entregador-empresas' }, empresas),
+    el('div', { class: 'desempenho-bar-track' }, el('div', { class: 'desempenho-bar-fill', style: `width:${proporcao}%` })),
+    chips.length ? el('div', { class: 'desempenho-chips' }, chips) : null,
   ]);
 }
 
@@ -1058,9 +1074,10 @@ function renderizarRanking(tipo) {
   const containerId = tipo === 'funcionario' ? 'rankingFuncionarios' : 'rankingEntregadores';
   const lista = tipo === 'funcionario' ? cache.resumo.rankingFuncionarios : cache.resumo.rankingEntregadores;
   const container = document.getElementById(containerId);
+  const maiorValor = lista.length ? lista[0].total : 0;
 
   limparEPreencher(container, lista.length
-    ? lista.map(cardRanking)
+    ? lista.map((item, indice) => cardDesempenho(item, indice + 1, maiorValor))
     : [estadoVazio(`Nenhuma pendência de ${rotuloTipo[tipo].toLowerCase()} neste período.`, '🏆')]);
 }
 
