@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Açaí no Grau & Subway</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <div class="lovspeu-credit">AÇAÍ NO GRAU & SUBWAY</div>
+
+  <div class="container app-shell">
+
+    <!-- LOGIN -->
+    <div id="loginBox" class="login-screen">
+
+      <section class="login-hero">
+        <div class="login-glow"></div>
+
+        <div class="login-brand-panel">
+          <div class="brand-pill">Sistema Financeiro</div>
+
+          <h1>
+           Controle Financeiro para<br>
+            Açaí no Grau & Subway
+          </h1>
+
+          <p>
+            Organize funcionários, entregadores, gastos, pendências,
+            pagamentos e relatórios em um painel profissional.
+          </p>
+
+          <div class="login-highlights">
+            <div>
+              <strong>Dashboard</strong>
+              <span>Resumo financeiro</span>
+            </div>
+
+            <div>
+              <strong>Relatórios</strong>
+              <span>PDF completo</span>
+            </div>
+
+            <div>
+              <strong>Controle</strong>
+              <span>Por pessoa e empresa</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="login-card modern-login-card">
+
+          <div class="logo-topo">
+            <img
+              id="logoEmpresa"
+              src="logo.png"
+              alt="Logo"
+              onclick="trocarLogo()"
+            >
+
+            <span>Açaí no Grau</span>
+          </div>
+
+          <p class="subtitle">
+            Acesse o seu painel:
+          </p>
+
+          <div class="form-group">
+            <label>Usuário</label>
+
+            <input
+              id="usuario"
+              placeholder="Digite seu usuário"
+              autocomplete="username"
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Senha</label>
+
+            <input
+              id="senha"
+              type="password"
+              placeholder="Digite sua senha"
+              autocomplete="current-password"
+            >
+          </div>
+
+          <button
+            class="primary-btn"
+            onclick="login()"
+          >
+            Entrar no Sistema
+          </button>
+
+          <p id="erro"></p>
+
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ADMIN -->
+    <div id="adminPanel" class="hidden admin-layout">
+
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
+
+        <div class="sidebar-brand">
+          <img src="logo.png" alt="Logo">
+
+          <div>
+            <strong>Açaí no Grau</strong>
+            <span>& Subway</span>
+          </div>
+        </div>
+
+        <nav class="sidebar-menu">
+
+          <button
+            class="nav-btn active"
+            onclick="trocarSecaoAdmin('visaoGeral', this)"
+          >
+            🏠 Visão Geral
+          </button>
+
+          <button
+            class="nav-btn"
+            onclick="trocarSecaoAdmin('cadastros', this)"
+          >
+            👥 Cadastros
+          </button>
+
+          <button
+            class="nav-btn"
+            onclick="trocarSecaoAdmin('gastos', this)"
+          >
+            💳 Gastos
+          </button>
+
+          <button
+            class="nav-btn"
+            onclick="trocarSecaoAdmin('rankings', this)"
+          >
+            🏆 Rankings
+          </button>
+
+          <button
+            class="nav-btn"
+            onclick="trocarSecaoAdmin('relatorios', this)"
+          >
+            📄 Relatórios
+          </button>
+
+        </nav>
+
+        <div class="sidebar-footer">
+
+          <button
+            class="btn-reset"
+            onclick="resetarSistema()"
+          >
+            Resetar
+          </button>
+
+          <button
+            class="btn-sair"
+            onclick="logout()"
+          >
+            Sair
+          </button>
+
+        </div>
+
+      </aside>
+
+      <!-- CONTEÚDO -->
+      <main class="admin-content">
+
+        <div class="topbar">
+
+          <div>
+            <span class="system-label">
+              Painel Administrativo
+            </span>
+
+            <h2>Controle de Gastos</h2>
+
+            <p id="boasVindasAdmin" class="painel-desc">
+              Bem-vindo ao seu controle de gastos.
+            </p>
+          </div>
+
+          <div class="topbar-actions">
+
+            <button
+              class="btn-sair mobile-only"
+              onclick="logout()"
+            >
+              Sair
+            </button>
+
+          </div>
+
+        </div>
+
+        <!-- VISÃO GERAL -->
+        <section
+          id="visaoGeral"
+          class="admin-section active-section"
+        >
+
+          <div class="meses-card">
+
+            <div>
+              <span>Filtrar por mês</span>
+              <p>Escolha um período para atualizar os totais do painel.</p>
+            </div>
+
+            <div class="meses-container">
+
+              <button class="mes-btn active" onclick="filtrarMes(0, event)">Todos</button>
+              <button class="mes-btn" onclick="filtrarMes(1, event)">Jan</button>
+              <button class="mes-btn" onclick="filtrarMes(2, event)">Fev</button>
+              <button class="mes-btn" onclick="filtrarMes(3, event)">Mar</button>
+              <button class="mes-btn" onclick="filtrarMes(4, event)">Abr</button>
+              <button class="mes-btn" onclick="filtrarMes(5, event)">Mai</button>
+              <button class="mes-btn" onclick="filtrarMes(6, event)">Jun</button>
+              <button class="mes-btn" onclick="filtrarMes(7, event)">Jul</button>
+              <button class="mes-btn" onclick="filtrarMes(8, event)">Ago</button>
+              <button class="mes-btn" onclick="filtrarMes(9, event)">Set</button>
+              <button class="mes-btn" onclick="filtrarMes(10, event)">Out</button>
+              <button class="mes-btn" onclick="filtrarMes(11, event)">Nov</button>
+              <button class="mes-btn" onclick="filtrarMes(12, event)">Dez</button>
+
+            </div>
+
+          </div>
+
+          <div class="dashboard-premium">
+
+            <div class="dash-card dash-pendente">
+              <div class="dash-icon">⚠️</div>
+              <span>Total Pendente</span>
+              <h1 id="totalGeral">R$ 0</h1>
+              <p>Valores em aberto</p>
+            </div>
+
+            <div class="dash-card dash-pago">
+              <div class="dash-icon">✅</div>
+              <span>Total Pago</span>
+              <h1 id="totalPago">R$ 0</h1>
+              <p>Valores quitados</p>
+            </div>
+
+            <div class="dash-card dash-geral">
+              <div class="dash-icon">💰</div>
+              <span>Total Movimentado</span>
+              <h1 id="totalMovimentado">R$ 0</h1>
+              <p>Pago + pendente</p>
+            </div>
+
+            <div class="dash-card dash-pessoas">
+              <div class="dash-icon">👥</div>
+              <span>Total Pessoas</span>
+              <h1 id="totalFuncionarios">0</h1>
+              <p>Funcionários cadastrados</p>
+            </div>
+
+          </div>
+
+          <div class="reports-grid">
+
+            <div class="card report-card">
+              <div class="report-icon">💳</div>
+              <h3>Gerenciar Gastos</h3>
+              <p>Acesse a área completa para cadastrar, buscar, pagar, editar e excluir gastos.</p>
+
+              <button onclick="trocarSecaoAdmin('gastos')">
+                Abrir Gastos
+              </button>
+            </div>
+
+            <div class="card report-card">
+              <div class="report-icon">👥</div>
+              <h3>Gerenciar Pessoas</h3>
+              <p>Acesse os cadastros de funcionários e entregadores do sistema.</p>
+
+              <button onclick="trocarSecaoAdmin('cadastros')">
+                Abrir Cadastros
+              </button>
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- CADASTROS -->
+        <section
+          id="cadastros"
+          class="admin-section"
+        >
+
+          <div class="section-title">
+            <span class="system-label">Cadastros</span>
+            <h2>Funcionários e Entregadores</h2>
+            <p>Cadastre, edite e organize as pessoas do sistema.</p>
+          </div>
+
+          <div class="forms-grid">
+
+            <div class="card premium-card">
+
+              <div class="card-title">
+                <h3>Cadastrar Funcionário</h3>
+                <p>Funcionários com acesso ao sistema.</p>
+              </div>
+
+              <input
+                id="nomeFuncionario"
+                placeholder="Nome do funcionário"
+              >
+
+              <input
+                id="usuarioFuncionario"
+                placeholder="Usuário"
+              >
+
+              <input
+                id="senhaFuncionario"
+                type="password"
+                placeholder="Senha"
+              >
+
+              <button onclick="cadastrarFuncionario()">
+                Cadastrar Funcionário
+              </button>
+
+            </div>
+
+            <div class="card premium-card">
+
+              <div class="card-title">
+                <h3>Cadastrar Entregador</h3>
+                <p>Entregadores para controle financeiro.</p>
+              </div>
+
+              <input
+                id="nomeEntregador"
+                placeholder="Nome do entregador"
+              >
+
+              <input
+                id="usuarioEntregador"
+                placeholder="Usuário"
+              >
+
+              <input
+                id="senhaEntregador"
+                type="password"
+                placeholder="Senha"
+              >
+
+              <button onclick="cadastrarEntregador()">
+                Cadastrar Entregador
+              </button>
+
+            </div>
+
+          </div>
+
+          <div class="secondary-layout">
+
+            <div class="card list-card">
+
+              <div class="card-header-flex">
+
+                <div>
+                  <h3>Funcionários</h3>
+                  <p class="card-subtitle">
+                    Lista completa de funcionários.
+                  </p>
+                </div>
+
+                <span class="badge">Lista</span>
+
+              </div>
+
+              <input
+                id="buscarFuncionario"
+                placeholder="Buscar funcionário..."
+                onkeyup="filtrarFuncionarios && filtrarFuncionarios()"
+              >
+
+              <ul
+                id="listaFuncionarios"
+                class="lista-estilizada"
+              ></ul>
+
+            </div>
+
+            <div class="card list-card">
+
+              <div class="card-header-flex">
+
+                <div>
+                  <h3>Entregadores</h3>
+                  <p class="card-subtitle">
+                    Lista completa de entregadores.
+                  </p>
+                </div>
+
+                <span class="badge">Lista</span>
+
+              </div>
+
+              <ul
+                id="listaEntregadores"
+                class="lista-estilizada"
+              ></ul>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- GASTOS -->
+        <section
+          id="gastos"
+          class="admin-section"
+        >
+
+          <div class="section-title">
+            <span class="system-label">Gastos</span>
+            <h2>Controle de Movimentações</h2>
+            <p>Registre e acompanhe gastos por pessoa, empresa e status.</p>
+          </div>
+
+          <div class="main-layout">
+
+            <div class="left-column">
+
+              <div class="card premium-card sticky-card">
+
+                <div class="card-title">
+                  <h3>Adicionar Gasto</h3>
+                  <p>Registre débitos por pessoa e empresa.</p>
+                </div>
+
+                <select id="funcionarioSelect"></select>
+
+                <select id="empresaGasto">
+                  <option value="Açaí no Grau">Açaí no Grau</option>
+                  <option value="Subway">Subway</option>
+                </select>
+
+                <input
+                  id="valorGasto"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="Valor do gasto"
+                >
+
+                <input
+                  id="descricaoGasto"
+                  placeholder="Descrição do gasto"
+                >
+
+                <button onclick="adicionarGasto()">
+                  Adicionar Gasto
+                </button>
+
+              </div>
+
+            </div>
+
+            <div class="right-column">
+
+              <div class="card gastos-card">
+
+                <div class="card-header-flex">
+
+                  <div>
+                    <h3>Todos os Gastos</h3>
+                    <p class="card-subtitle">
+                      Histórico geral de débitos, pagamentos e movimentações.
+                    </p>
+                  </div>
+
+                  <div class="header-actions">
+                    <span class="badge">Histórico</span>
+
+                    <button
+                      class="action-btn pdf-mini-btn"
+                      onclick="gerarPDF()"
+                    >
+                      PDF
+                    </button>
+                  </div>
+
+                </div>
+
+                <input
+                  id="buscarGasto"
+                  placeholder="Buscar gasto pelo nome..."
+                  onkeyup="filtrarGastos()"
+                >
+
+                <div
+                  id="acoesLote"
+                  class="acoes-lote hidden"
+                >
+
+                  <div class="acoes-esquerda">
+
+                    <label class="select-all-label">
+
+                      <input
+                        type="checkbox"
+                        id="selecionarTodos"
+                        onclick="toggleSelecionarTodos()"
+                      >
+
+                      <span>Selecionar Todos</span>
+
+                    </label>
+
+                    <span
+                      id="contadorSelecionados"
+                      class="contador-selecionados"
+                    >
+                      0 selecionados
+                    </span>
+
+                  </div>
+
+                  <div class="acoes-direita">
+
+                    <button
+                      class="btn-lote pagar-btn"
+                      onclick="marcarSelecionadosComoPagos()"
+                    >
+                      Marcar como Pagos
+                    </button>
+
+                    <button
+                      class="btn-lote excluir-btn"
+                      onclick="excluirSelecionados()"
+                    >
+                      Excluir Gastos
+                    </button>
+
+                  </div>
+
+                </div>
+
+                <ul
+                  id="listaGastos"
+                  class="lista-gastos"
+                ></ul>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- RANKINGS -->
+        <section
+          id="rankings"
+          class="admin-section"
+        >
+
+          <div class="section-title">
+            <span class="system-label">Rankings</span>
+            <h2>Maiores Pendências</h2>
+            <p>Ranking separado por funcionários e entregadores.</p>
+          </div>
+
+          <div class="ranking-layout">
+
+            <div class="card ranking-card">
+
+              <div class="card-title">
+                <h3>Ranking de Gastos - Funcionários</h3>
+                <p>Maiores débitos pendentes por funcionário.</p>
+              </div>
+
+              <div
+                id="ranking"
+                class="ranking-lista"
+              ></div>
+
+            </div>
+
+            <div class="card ranking-card">
+
+              <div class="card-title">
+                <h3>Ranking de Gastos - Entregadores</h3>
+                <p>Maiores débitos pendentes por entregador.</p>
+              </div>
+
+              <div
+                id="rankingEntregadores"
+                class="ranking-lista"
+              ></div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- RELATÓRIOS -->
+        <section
+          id="relatorios"
+          class="admin-section"
+        >
+
+          <div class="section-title">
+            <span class="system-label">Relatórios</span>
+            <h2>Documentos e Exportações</h2>
+            <p>Gere PDFs financeiros e resumos por funcionários.</p>
+          </div>
+
+          <div class="reports-grid">
+
+            <div class="card report-card">
+
+              <div class="report-icon">📊</div>
+
+              <h3>Relatório PDF</h3>
+
+              <p>
+                Escolha entre financeiro completo ou resumo de funcionários.
+              </p>
+
+              <button onclick="gerarPDF()">
+                Gerar Relatório
+              </button>
+
+            </div>
+
+            <div class="card report-card muted-card">
+
+              <div class="report-icon">💡</div>
+
+              <h3>Organização</h3>
+
+              <p>
+                Os relatórios respeitam o filtro de mês selecionado na Visão Geral.
+              </p>
+
+              <button onclick="trocarSecaoAdmin('visaoGeral')">
+                Alterar Filtro
+              </button>
+
+            </div>
+
+          </div>
+
+        </section>
+
+      </main>
+
+    </div>
+
+    <!-- PAINEL FUNCIONÁRIO / ENTREGADOR -->
+    <div
+      id="funcionarioPanel"
+      class="hidden funcionario-shell"
+    >
+
+      <div class="topbar funcionario-topbar">
+
+        <div>
+          <span class="system-label">
+            Área do Funcionário
+          </span>
+
+          <h2>Meus Gastos</h2>
+
+          <p
+            id="boasVindasFuncionario"
+            class="painel-desc"
+          >
+            Bem-vindo ao seu controle de gastos.
+          </p>
+        </div>
+
+        <button
+          class="btn-sair"
+          onclick="logout()"
+        >
+          Sair
+        </button>
+
+      </div>
+
+      <div class="dashboard-premium funcionario-dashboard">
+
+        <div class="dash-card dash-acai">
+          <div class="dash-icon">🍧</div>
+          <span>Total Açaí</span>
+          <h1 id="totalAcai">R$ 0</h1>
+          <p>Débitos no Açaí no Grau</p>
+        </div>
+
+        <div class="dash-card dash-subway">
+          <div class="dash-icon">🥪</div>
+          <span>Total Subway</span>
+          <h1 id="totalSubway">R$ 0</h1>
+          <p>Débitos no Subway</p>
+        </div>
+
+        <div class="dash-card dash-geral">
+          <div class="dash-icon">💰</div>
+          <span>Total Geral</span>
+          <h1 id="meuTotal">R$ 0</h1>
+          <p>Total pendente</p>
+        </div>
+
+      </div>
+
+      <div class="card gastos-card">
+
+        <div class="card-title">
+          <h3>Histórico de Gastos</h3>
+          <p>Acompanhe seus gastos registrados.</p>
+        </div>
+
+        <ul
+          id="meusGastos"
+          class="lista-gastos"
+        ></ul>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
