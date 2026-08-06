@@ -1,9 +1,9 @@
 # Blueprint do Render (render.com/docs/blueprint-spec).
 #
-# "plan: starter" é o que mantém o serviço ligado 24h sem dormir — no
-# plano "free" o Render derruba o serviço após ~15 min sem tráfego e ele
-# demora alguns segundos para acordar na próxima requisição. Troque para
-# "free" aqui se quiser só testar antes de pagar.
+# "plan: free" + um bot de uptime pingando a URL a cada poucos minutos
+# evita o soninho de ~15 min sem tráfego do plano gratuito. Isso não é
+# um "sempre ligado" garantido pela Render (ver README) — se quiser essa
+# garantia oficial, troque para "plan: starter" (pago).
 #
 # As variáveis marcadas com "sync: false" são segredos: o Render vai
 # pedir o valor manualmente no painel na hora de criar o serviço — elas
@@ -12,7 +12,7 @@ services:
   - type: web
     name: erp-fiado
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:

@@ -102,10 +102,18 @@ npm run testar:conexao
 3. Preencha os valores marcados como secretos no painel do Render
    (`JWT_SECRET`, `ADMIN_USER`, `ADMIN_PASSWORD`, `PGHOST`, `PGPORT`,
    `PGUSER`, `PGPASSWORD`, `PGDATABASE`) — os mesmos do seu `.env`.
-4. **Sobre ficar 24h ligado**: o `render.yaml` já usa `plan: starter`.
-   No plano **free** do Render o serviço dorme após ~15 min sem
-   tráfego (a próxima requisição demora alguns segundos pra acordar);
-   só o plano pago mantém o serviço sempre ativo.
+4. **Sobre ficar 24h ligado**: o `render.yaml` está com `plan: free`.
+   Nesse plano o Render derruba o serviço após ~15 min sem tráfego.
+   Para evitar isso sem pagar, configure um bot de uptime (ex:
+   [UptimeRobot](https://uptimerobot.com), gratuito) pingando a URL do
+   serviço a cada 5 minutos — menos que o limite de 15 min, então o
+   serviço nunca chega a dormir. Isso não é um "sempre ligado" oficial
+   da Render (é um workaround comum, não uma garantia contratual): se
+   o bot cair, ou a conta passar do teto de ~750h/mês do plano free,
+   o serviço pode ficar indisponível por um tempo — nenhum dado é
+   perdido nesse caso, só fica fora do ar até voltar. Para uma garantia
+   de verdade, troque `plan: free` por `plan: starter` no
+   `render.yaml` (pago, ~US$7/mês).
 
 ---
 
