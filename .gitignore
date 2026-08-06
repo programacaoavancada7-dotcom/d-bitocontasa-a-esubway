@@ -3,3 +3,7 @@ node_modules/
 database.db
 *.log
 backups/
+
+# Modelo de idioma do Tesseract, baixado automaticamente na primeira
+# vez que o OCR roda (~2.4 MB) — não é código, não precisa versionar.
+*.traineddata

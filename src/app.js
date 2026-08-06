@@ -13,6 +13,7 @@ const gastosRoutes = require('./routes/gastos.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
 const sistemaRoutes = require('./routes/sistema.routes');
 const whatsappRoutes = require('./routes/whatsapp.routes');
+const comprovantesRoutes = require('./routes/comprovantes.routes');
 
 const app = express();
 
@@ -30,12 +31,13 @@ app.use(gastosRoutes);
 app.use(relatoriosRoutes);
 app.use(sistemaRoutes);
 app.use(whatsappRoutes);
+app.use(comprovantesRoutes);
 
 // Qualquer rota de API (prefixo conhecido) que não bateu em nada acima
 // retorna 404 em JSON, em vez de silenciosamente devolver o index.html
 // (o que antes tornava erros de digitação em chamadas de API confusos
 // de depurar — parecia "deu certo" porque voltava HTML 200).
-const PREFIXOS_API = ['/login', '/funcionarios', '/entregadores', '/gastos', '/admin', '/meus-gastos', '/meu-total', '/resetar-sistema'];
+const PREFIXOS_API = ['/login', '/funcionarios', '/entregadores', '/gastos', '/admin', '/meus-gastos', '/meu-total', '/resetar-sistema', '/entregador'];
 app.use((req, res, next) => {
   if (PREFIXOS_API.some((prefixo) => req.path.startsWith(prefixo))) {
     return notFound(req, res);

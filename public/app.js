@@ -687,6 +687,7 @@ async function abrirModalNovoFuncionario() {
       { nome: 'nome', label: 'Nome completo', obrigatorio: true },
       { nome: 'usuario', label: 'Usuário de acesso', obrigatorio: true },
       { nome: 'senha', label: 'Senha', tipo: 'password', obrigatorio: true, dica: 'Mínimo de 6 caracteres.' },
+      { nome: 'telefone', label: 'Telefone (opcional)' },
     ],
     textoConfirmar: 'Cadastrar',
   });
@@ -710,6 +711,7 @@ async function editarFuncionario(funcionario) {
       { nome: 'nome', label: 'Nome', valor: funcionario.nome, obrigatorio: true },
       { nome: 'usuario', label: 'Usuário', valor: funcionario.usuario, obrigatorio: true },
       { nome: 'senha', label: 'Nova senha (opcional)', tipo: 'password', dica: 'Deixe em branco para manter a senha atual.' },
+      { nome: 'telefone', label: 'Telefone (opcional)', valor: funcionario.telefone || '' },
     ],
   });
   if (!valores) return;
@@ -775,6 +777,7 @@ async function abrirModalNovoEntregador() {
       { nome: 'nome', label: 'Nome completo', obrigatorio: true },
       { nome: 'usuario', label: 'Usuário de acesso', obrigatorio: true },
       { nome: 'senha', label: 'Senha', tipo: 'password', obrigatorio: true, dica: 'Mínimo de 6 caracteres.' },
+      { nome: 'telefone', label: 'Telefone (WhatsApp)', dica: 'Com DDD, só números. Usado para lembretes automáticos.' },
     ],
     textoConfirmar: 'Cadastrar',
   });
@@ -798,6 +801,7 @@ async function editarEntregador(entregador) {
       { nome: 'nome', label: 'Nome', valor: entregador.nome, obrigatorio: true },
       { nome: 'usuario', label: 'Usuário', valor: entregador.usuario, obrigatorio: true },
       { nome: 'senha', label: 'Nova senha (opcional)', tipo: 'password', dica: 'Deixe em branco para manter a senha atual.' },
+      { nome: 'telefone', label: 'Telefone (WhatsApp)', valor: entregador.telefone || '', dica: 'Com DDD, só números.' },
     ],
   });
   if (!valores) return;

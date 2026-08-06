@@ -113,6 +113,20 @@ async function marcarComoPago(id) {
   return { success: true };
 }
 
+/**
+ * Marca todos os gastos pendentes de um entregador como pagos de uma
+ * vez — usado quando um comprovante é confirmado (a mesma operação que
+ * o botão "Marcar como pagos" já faz, só que disparada pelo sistema em
+ * vez de um clique do admin).
+ */
+async function marcarTodosPagosDoEntregador(entregadorId) {
+  const resultado = await run(
+    `UPDATE gastos SET status = 'pago' WHERE entregador_id = ? AND status = 'pendente'`,
+    [entregadorId]
+  );
+  return { quantidadeAtualizada: resultado.changes };
+}
+
 async function remover(id) {
   const resultado = await run('DELETE FROM gastos WHERE id = ?', [id]);
   if (resultado.changes === 0) throw new AppError(404, 'Gasto não encontrado.');
@@ -138,6 +152,7 @@ module.exports = {
   listarPorUsuario,
   totalPendenteDoUsuario,
   marcarComoPago,
+  marcarTodosPagosDoEntregador,
   remover,
   editar,
 };

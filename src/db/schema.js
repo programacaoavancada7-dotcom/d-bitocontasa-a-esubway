@@ -16,7 +16,15 @@
  * esse formato exato.
  */
 
-const { run } = require('./index');
+const { run, all } = require('./index');
+
+async function colunaExiste(tabela, coluna) {
+  const linhas = await all(
+    'SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?',
+    [tabela, coluna]
+  );
+  return linhas.length > 0;
+}
 
 async function migrate() {
   await run(`
@@ -26,9 +34,17 @@ async function migrate() {
       usuario TEXT UNIQUE NOT NULL,
       senha TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'funcionario',
+      telefone TEXT,
       criado_em TEXT NOT NULL DEFAULT to_char(now() - interval '3 hours', 'YYYY-MM-DD HH24:MI:SS')
     )
   `);
+
+  // Telefone é usado pelo módulo de WhatsApp (mensagem do comprovante e
+  // lembrete individual — Etapa 4). Coluna nova e opcional: cadastros
+  // antigos continuam válidos, só ficam sem telefone até serem editados.
+  if (!(await colunaExiste('users', 'telefone'))) {
+    await run('ALTER TABLE users ADD COLUMN telefone TEXT');
+  }
 
   await run(`
     CREATE TABLE IF NOT EXISTS gastos (
@@ -90,12 +106,19 @@ async function migrarModuloWhatsapp() {
     )
   `);
 
+  // Arquivo do comprovante vai direto no Postgres (BYTEA) em vez de
+  // disco local ou um serviço de storage à parte (ex: Supabase Storage).
+  // Evita depender de mais uma credencial/serviço externo — dado o
+  // tamanho normal de um comprovante (foto/print, poucos KB a poucos MB)
+  // isso é uma escolha pragmática, não a única correta em qualquer
+  // escala; se o volume crescer muito, migrar pra um object storage é o
+  // próximo passo natural.
   await run(`
     CREATE TABLE IF NOT EXISTS comprovantes (
       id SERIAL PRIMARY KEY,
       entregador_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
       valor_debito DOUBLE PRECISION NOT NULL,
-      arquivo_path TEXT NOT NULL,
+      arquivo_dados BYTEA,
       arquivo_mime TEXT NOT NULL,
       arquivo_tamanho INTEGER NOT NULL,
       ip_envio TEXT,
@@ -108,6 +131,16 @@ async function migrarModuloWhatsapp() {
       criado_em TEXT NOT NULL DEFAULT to_char(now() - interval '3 hours', 'YYYY-MM-DD HH24:MI:SS')
     )
   `);
+
+  // Migração aditiva: a Etapa 1 criou "comprovantes" com uma coluna
+  // arquivo_path (pensada pra disco) que nunca chegou a ser usada (a
+  // tabela ainda estava vazia). Troca segura porque não há dados reais.
+  if (!(await colunaExiste('comprovantes', 'arquivo_dados'))) {
+    await run('ALTER TABLE comprovantes ADD COLUMN arquivo_dados BYTEA');
+  }
+  if (await colunaExiste('comprovantes', 'arquivo_path')) {
+    await run('ALTER TABLE comprovantes DROP COLUMN arquivo_path');
+  }
 
   await run(`
     CREATE TABLE IF NOT EXISTS comprovante_ocr (

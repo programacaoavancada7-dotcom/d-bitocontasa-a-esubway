@@ -35,4 +35,11 @@ function admin(req, res, next) {
   next();
 }
 
-module.exports = { auth, admin };
+function entregador(req, res, next) {
+  if (req.user.role !== 'entregador') {
+    return res.status(403).json({ error: 'Acesso restrito a entregadores' });
+  }
+  next();
+}
+
+module.exports = { auth, admin, entregador };

@@ -20,7 +20,13 @@ const ROTULOS = {
   entregador: 'Entregador',
 };
 
-async function criar(role, { nome, usuario, senha }) {
+function normalizarTelefone(telefone) {
+  if (!telefone) return null;
+  const digitos = telefone.replace(/\D/g, '');
+  return digitos.length ? digitos : null;
+}
+
+async function criar(role, { nome, usuario, senha, telefone }) {
   const nomeValido = requireString(nome, 'nome');
   const usuarioValido = requireString(usuario, 'usuário');
   requirePassword(senha);
@@ -31,25 +37,27 @@ async function criar(role, { nome, usuario, senha }) {
   }
 
   const hash = await bcrypt.hash(senha, 10);
+  const telefoneValido = normalizarTelefone(telefone);
 
   const { lastID } = await run(
-    'INSERT INTO users (nome, usuario, senha, role) VALUES (?, ?, ?, ?) RETURNING id',
-    [nomeValido, usuarioValido, hash, role]
+    'INSERT INTO users (nome, usuario, senha, role, telefone) VALUES (?, ?, ?, ?, ?) RETURNING id',
+    [nomeValido, usuarioValido, hash, role, telefoneValido]
   );
 
-  return { id: lastID, nome: nomeValido, usuario: usuarioValido, role };
+  return { id: lastID, nome: nomeValido, usuario: usuarioValido, role, telefone: telefoneValido };
 }
 
 function listar(role) {
   return all(
-    `SELECT id, nome, usuario FROM users WHERE role = ? ORDER BY nome ASC`,
+    `SELECT id, nome, usuario, telefone FROM users WHERE role = ? ORDER BY nome ASC`,
     [role]
   );
 }
 
-async function atualizar(role, id, { nome, usuario, senha }) {
+async function atualizar(role, id, { nome, usuario, senha, telefone }) {
   const nomeValido = requireString(nome, 'nome');
   const usuarioValido = requireString(usuario, 'usuário');
+  const telefoneValido = normalizarTelefone(telefone);
 
   const duplicado = await get(
     'SELECT id FROM users WHERE usuario = ? AND id != ?',
@@ -70,13 +78,13 @@ async function atualizar(role, id, { nome, usuario, senha }) {
     const hash = await bcrypt.hash(senha, 10);
 
     await run(
-      `UPDATE users SET nome=?, usuario=?, senha=? WHERE id=? AND role=?`,
-      [nomeValido, usuarioValido, hash, id, role]
+      `UPDATE users SET nome=?, usuario=?, senha=?, telefone=? WHERE id=? AND role=?`,
+      [nomeValido, usuarioValido, hash, telefoneValido, id, role]
     );
   } else {
     await run(
-      `UPDATE users SET nome=?, usuario=? WHERE id=? AND role=?`,
-      [nomeValido, usuarioValido, id, role]
+      `UPDATE users SET nome=?, usuario=?, telefone=? WHERE id=? AND role=?`,
+      [nomeValido, usuarioValido, telefoneValido, id, role]
     );
   }
 
@@ -102,4 +110,8 @@ async function remover(role, id) {
   return { success: true };
 }
 
-module.exports = { criar, listar, atualizar, remover };
+function buscarPorId(id) {
+  return get('SELECT id, nome, usuario, role, telefone FROM users WHERE id = ?', [id]);
+}
+
+module.exports = { criar, listar, atualizar, remover, buscarPorId };
