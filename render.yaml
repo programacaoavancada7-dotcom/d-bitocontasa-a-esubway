@@ -34,3 +34,9 @@ services:
         sync: false
       - key: PGDATABASE
         sync: false
+      - key: WHATSAPP_HABILITADO
+        value: 'true'
+      - key: WHATSAPP_GRUPO_NOME
+        value: Açaí clts
+      - key: PIX_CHAVE
+        value: 37.937.310/0001-47

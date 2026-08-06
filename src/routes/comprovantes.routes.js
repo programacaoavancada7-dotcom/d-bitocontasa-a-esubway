@@ -2,12 +2,26 @@ const express = require('express');
 const { auth, admin, entregador } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const uploadComprovante = require('../middleware/uploadComprovante');
+const criarRateLimiter = require('../middleware/rateLimiter');
 const comprovanteService = require('../services/comprovanteService');
 const pessoasService = require('../services/pessoasService');
 const AppError = require('../utils/AppError');
 const { pix } = require('../config/env');
 
 const router = express.Router();
+
+// Evita que um entregador (de propósito ou por engano, ex: clicando
+// "enviar" várias vezes) sobrecarregue o pipeline de OCR — que é
+// razoavelmente pesado (Tesseract + Sharp rodando na mesma instância
+// que serve o resto do ERP). 6 envios a cada 15 minutos é folgado pro
+// uso real (ninguém paga o próprio débito 6 vezes seguidas) e barra
+// abuso/spam.
+const comprovanteUploadRateLimiter = criarRateLimiter({
+  janelaMs: 15 * 60 * 1000,
+  max: 6,
+  obterChave: (req) => `comprovante:${req.user.id}`,
+  mensagem: 'Muitos envios de comprovante em pouco tempo. Aguarde alguns minutos e tente novamente.',
+});
 
 // Dados da chave PIX pra tela de pagamento — nunca hardcoded no
 // frontend, assim trocar a chave é só mudar o .env.
@@ -33,6 +47,7 @@ router.post(
   '/entregador/comprovantes',
   auth,
   entregador,
+  comprovanteUploadRateLimiter,
   uploadComprovante,
   asyncHandler(async (req, res) => {
     // Telefone não vai no token (pode ser editado depois do login), então

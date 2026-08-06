@@ -17,6 +17,15 @@ const comprovantesRoutes = require('./routes/comprovantes.routes');
 
 const app = express();
 
+// O Render (e o Cloudflare na frente dele) fica entre o navegador e este
+// processo — sem isso, `req.ip` mostraria sempre o IP do proxy, não o do
+// usuário de verdade. Isso quebraria três coisas silenciosamente: o
+// rate limiter de login e o de upload de comprovante passariam a
+// limitar TODO MUNDO junto (mesma "chave" de IP pra todos os usuários,
+// já que todos apareceriam vindo do mesmo proxy), e o campo `ip_envio`
+// salvo em cada comprovante (auditoria) seria inútil.
+app.set('trust proxy', true);
+
 app.use(securityHeaders);
 // Se CORS_ORIGIN estiver definido no .env, restringe a esse domínio;
 // caso contrário mantém o comportamento aberto original (útil em dev/ngrok).
