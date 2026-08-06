@@ -33,7 +33,7 @@ async function criar(role, { nome, usuario, senha }) {
   const hash = await bcrypt.hash(senha, 10);
 
   const { lastID } = await run(
-    'INSERT INTO users (nome, usuario, senha, role) VALUES (?, ?, ?, ?)',
+    'INSERT INTO users (nome, usuario, senha, role) VALUES (?, ?, ?, ?) RETURNING id',
     [nomeValido, usuarioValido, hash, role]
   );
 

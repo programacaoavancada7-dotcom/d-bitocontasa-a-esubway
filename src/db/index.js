@@ -1,75 +1,66 @@
 /**
- * Conexão com o SQLite + wrappers em Promise.
+ * Conexão com o Postgres (Supabase) + wrappers em Promise.
  *
- * Por quê mudou:
- * - Antes: `new sqlite3.Database('./database.db')` usa caminho RELATIVO ao
- *   diretório de onde o processo foi iniciado (cwd), não à pasta do projeto.
- *   Se alguém iniciar o servidor de outra pasta (outro atalho, outro script,
- *   pm2, etc.) o Node cria um banco NOVO E VAZIO nesse lugar, silenciosamente.
- *   Isso já causou um banco "fantasma" fora da pasta do projeto neste
- *   histórico do sistema. Agora o caminho é sempre absoluto, baseado em
- *   __dirname, então o banco usado é sempre o mesmo, não importa de onde
- *   o `node` é chamado.
- * - Antes: toda query usava callback (`db.run(sql, params, (err, row) => {...})`)
- *   e vários lugares no server.js não verificavam `err` antes de usar o
- *   resultado (ex: DELETE /funcionarios/:id e /entregadores/:id liam
- *   `row.total` sem checar erro — se a query falhasse, `row` seria
- *   `undefined` e o acesso a `row.total` derrubava o processo inteiro,
- *   tirando o sistema do ar para todo mundo). Os wrappers abaixo sempre
- *   rejeitam a Promise em caso de erro, então isso é tratado de forma
- *   centralizada pelo middleware de erro (ver src/middleware/errorHandler.js).
+ * Migrado de SQLite para Postgres porque o Render (onde este projeto
+ * será hospedado) usa disco efêmero: um arquivo `database.db` seria
+ * apagado a cada deploy/reinício do serviço. O Supabase hospeda o
+ * banco fora do Render, então os dados sobrevivem a qualquer deploy.
+ *
+ * Para minimizar mudança de código, `run/get/all` mantêm a mesma
+ * assinatura de antes (sql com `?` como placeholder posicional) — a
+ * conversão para o formato `$1, $2...` do Postgres acontece aqui,
+ * escondida dos services/rotas que já usavam essa API.
  */
 
-const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
+const { databaseUrl, pg: pgConfig } = require('../config/env');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'database.db');
+function precisaSsl(hostOuUrl) {
+  return !/localhost|127\.0\.0\.1/.test(hostOuUrl || '');
+}
 
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) {
-    console.error('[db] Falha ao abrir o banco de dados:', err.message);
-    process.exit(1);
-  }
+// Prioriza campos separados (PGHOST/PGUSER/PGPASSWORD/...) quando
+// configurados — evita todo o risco de caracteres especiais na senha
+// quebrarem o parsing de uma DATABASE_URL única. Ver src/config/env.js.
+const pool = pgConfig
+  ? new Pool({ ...pgConfig, ssl: precisaSsl(pgConfig.host) ? { rejectUnauthorized: false } : false })
+  : new Pool({
+      connectionString: databaseUrl,
+      ssl: precisaSsl(databaseUrl) ? { rejectUnauthorized: false } : false,
+    });
+
+pool.on('error', (err) => {
+  // Erros em clientes ociosos do pool não devem derrubar o processo
+  // (mesmo espírito do asyncHandler: nunca deixar um erro de banco
+  // virar um crash não tratado do servidor inteiro).
+  console.error('[db] Erro inesperado no pool do Postgres:', err.message);
 });
 
-// Garante integridade referencial nas checagens em nível de aplicação
-// e ativa o enforcement nativo do SQLite para tabelas futuras.
-db.run('PRAGMA foreign_keys = ON');
-
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function callback(err) {
-      if (err) return reject(err);
-      resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
+function converterPlaceholders(sql) {
+  let indice = 0;
+  return sql.replace(/\?/g, () => `$${(indice += 1)}`);
 }
 
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
+async function run(sql, params = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), params);
+  return {
+    lastID: resultado.rows[0] ? resultado.rows[0].id : undefined,
+    changes: resultado.rowCount,
+  };
 }
 
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
+async function get(sql, params = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), params);
+  return resultado.rows[0];
 }
 
-function exec(sql) {
-  return new Promise((resolve, reject) => {
-    db.exec(sql, (err) => {
-      if (err) return reject(err);
-      resolve();
-    });
-  });
+async function all(sql, params = []) {
+  const resultado = await pool.query(converterPlaceholders(sql), params);
+  return resultado.rows;
 }
 
-module.exports = { db, run, get, all, exec, DB_PATH };
+async function exec(sql) {
+  await pool.query(sql);
+}
+
+module.exports = { pool, run, get, all, exec };

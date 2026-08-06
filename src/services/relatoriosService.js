@@ -48,12 +48,12 @@ async function getResumo(filtro = {}) {
   const params = [];
 
   if (filtro.ano) {
-    condicoes.push("strftime('%Y', gastos.data) = ?");
+    condicoes.push('substring(gastos.data from 1 for 4) = ?');
     params.push(String(filtro.ano));
   }
 
   if (filtro.mes) {
-    condicoes.push("strftime('%m', gastos.data) = ?");
+    condicoes.push('substring(gastos.data from 6 for 2) = ?');
     params.push(String(filtro.mes).padStart(2, '0'));
   }
 
@@ -98,9 +98,13 @@ async function getResumo(filtro = {}) {
     }
   }
 
+  // Atenção: o Postgres deixa em minúsculas qualquer alias de coluna sem
+  // aspas (`AS totalFuncionarios` viraria `totalfuncionarios` na linha
+  // retornada). Por isso os aliases abaixo são citados entre aspas —
+  // sem isso, a desestruturação abaixo receberia `undefined`.
   const [{ totalFuncionarios } = {}, { totalEntregadores } = {}] = await Promise.all([
-    all("SELECT COUNT(*) as totalFuncionarios FROM users WHERE role='funcionario'"),
-    all("SELECT COUNT(*) as totalEntregadores FROM users WHERE role='entregador'"),
+    all('SELECT COUNT(*)::int as "totalFuncionarios" FROM users WHERE role=\'funcionario\''),
+    all('SELECT COUNT(*)::int as "totalEntregadores" FROM users WHERE role=\'entregador\''),
   ]).then(([a, b]) => [a[0], b[0]]);
 
   return {

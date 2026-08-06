@@ -48,7 +48,7 @@ async function criar({ funcionario_id, entregador_id, valor, descricao, empresa 
 
   const { lastID } = await run(
     `INSERT INTO gastos (funcionario_id, entregador_id, valor, descricao, empresa)
-     VALUES (?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?) RETURNING id`,
     [funcionario_id || null, entregador_id || null, valorValido, descricaoValida, empresaValida]
   );
 
@@ -68,18 +68,22 @@ const SELECT_BASE = `
 /**
  * @param {{ano?: number, mes?: number}} filtro - filtro opcional por
  * ANO+MÊS (não só mês — ver relatoriosService.js para o motivo).
+ *
+ * `data` é TEXT no formato 'YYYY-MM-DD HH24:MI:SS', então o ano é
+ * sempre os 4 primeiros caracteres e o mês os 2 seguintes — dá pra
+ * filtrar com substring em vez de precisar de um tipo de data real.
  */
 function listarTodos(filtro = {}) {
   const condicoes = [];
   const params = [];
 
   if (filtro.ano) {
-    condicoes.push("strftime('%Y', gastos.data) = ?");
+    condicoes.push('substring(gastos.data from 1 for 4) = ?');
     params.push(String(filtro.ano));
   }
 
   if (filtro.mes) {
-    condicoes.push("strftime('%m', gastos.data) = ?");
+    condicoes.push('substring(gastos.data from 6 for 2) = ?');
     params.push(String(filtro.mes).padStart(2, '0'));
   }
 

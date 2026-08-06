@@ -13,8 +13,15 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
     return res.status(err.status).json({ error: err.message });
   }
 
-  if (err && err.code === 'SQLITE_CONSTRAINT') {
+  // '23505' = unique_violation no Postgres (ex: usuario duplicado).
+  if (err && err.code === '23505') {
     return res.status(400).json({ error: 'Usuário já existe ou dado duplicado.' });
+  }
+
+  // '23503' = foreign_key_violation (ex: gasto apontando pra um
+  // funcionario_id/entregador_id que nao existe mais).
+  if (err && err.code === '23503') {
+    return res.status(400).json({ error: 'Referência inválida: verifique se a pessoa selecionada ainda existe.' });
   }
 
   console.error('[erro não tratado]', err);
