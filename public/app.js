@@ -223,6 +223,27 @@ const Api = {
   post(caminho, body) { return this.chamar(caminho, { method: 'POST', body }); },
   put(caminho, body) { return this.chamar(caminho, { method: 'PUT', body: body || {} }); },
   del(caminho, body) { return this.chamar(caminho, { method: 'DELETE', body }); },
+
+  /**
+   * Upload de arquivo (multipart/form-data) — não usa `chamar()` porque
+   * ali o Content-Type é sempre "application/json"; aqui o navegador
+   * precisa definir o Content-Type sozinho (com o boundary do multipart).
+   */
+  async upload(caminho, formData) {
+    const resposta = await fetch(caminho, {
+      method: 'POST',
+      headers: { authorization: token },
+      body: formData,
+    });
+
+    let dados = null;
+    try { dados = await resposta.json(); } catch { dados = null; }
+
+    if (!resposta.ok) {
+      throw new Error((dados && dados.error) || 'Erro inesperado. Tente novamente.');
+    }
+    return dados;
+  },
 };
 
 function queryStringFiltro() {
@@ -434,6 +455,13 @@ async function iniciarPainel() {
     document.getElementById('adminPanel').classList.remove('hidden');
     inicializarBuscas();
     await carregarTudo();
+  } else if (role === 'entregador') {
+    document.getElementById('funcionarioPanel').classList.remove('hidden');
+    document.getElementById('areaLabel').innerText = 'Área do entregador';
+    document.getElementById('tituloArea').innerText = 'Financeiro';
+    document.getElementById('financeiroEntregador').classList.remove('hidden');
+    document.getElementById('gastosFuncionarioSimples').classList.add('hidden');
+    await carregarFinanceiroEntregador();
   } else {
     document.getElementById('funcionarioPanel').classList.remove('hidden');
     await carregarPainelFuncionario();
@@ -1294,6 +1322,191 @@ async function carregarPainelFuncionario() {
     ],
   });
   tabela.setDados(dados);
+}
+
+/* =========================================================
+   FINANCEIRO DO ENTREGADOR (débito, pagamento PIX, comprovante)
+========================================================= */
+
+async function carregarFinanceiroEntregador() {
+  const container = document.getElementById('tabelaHistoricoDebitos');
+  const containerPagos = document.getElementById('tabelaHistoricoPagamentos');
+  const containerComprovantes = document.getElementById('tabelaComprovantesEnviados');
+
+  [container, containerPagos, containerComprovantes].forEach((c) => {
+    c.innerHTML = '';
+    c.appendChild(el('div', { class: 'skeleton' }));
+  });
+
+  const [resumo, comprovantes] = await Promise.all([
+    Api.get('/entregador/financeiro/resumo'),
+    Api.get('/entregador/comprovantes'),
+  ]);
+
+  cache.financeiroEntregador = resumo;
+
+  const badge = document.getElementById('situacaoFinanceiraBadge');
+  badge.className = `status-badge ${resumo.situacao === 'em_dia' ? 'pago' : 'pendente'}`;
+  badge.textContent = resumo.situacao === 'em_dia' ? 'Em dia' : 'Pendente';
+
+  limparEPreencher(document.getElementById('kpiGridEntregador'), [
+    kpiCard({ icone: '⚠️', tom: resumo.debitoAtual > 0 ? 'danger' : 'success', rotulo: 'Débito atual', valor: formatarMoeda(resumo.debitoAtual) }),
+    kpiCard({
+      icone: '✅',
+      tom: 'success',
+      rotulo: 'Último pagamento',
+      valor: resumo.ultimoPagamento ? formatarMoeda(resumo.ultimoPagamento.valor) : '—',
+      descricao: resumo.ultimoPagamento ? formatarData(resumo.ultimoPagamento.data) : 'Nenhum pagamento ainda',
+    }),
+  ]);
+
+  const colunasGasto = [
+    colunaTexto('empresa', 'Empresa', { classe: 'cell-strong' }),
+    { chave: 'valor', titulo: 'Valor', sortavel: true, valorOrdenacao: (g) => Number(g.valor) || 0, render: (g) => el('td', { class: 'cell-num' }, formatarMoeda(g.valor)) },
+    colunaTexto('descricao', 'Descrição', { sortavel: false }),
+    { chave: 'data', titulo: 'Data', sortavel: true, valorOrdenacao: (g) => g.data, render: (g) => el('td', { class: 'cell-muted' }, formatarData(g.data)) },
+  ];
+
+  criarTabela({ container, vazio: 'Nenhum débito pendente.', iconeVazio: '✅', colunas: colunasGasto }).setDados(resumo.historicoDebitos);
+  criarTabela({ container: containerPagos, vazio: 'Nenhum pagamento ainda.', iconeVazio: '🗂️', colunas: colunasGasto }).setDados(resumo.historicoPagamentos);
+
+  criarTabela({
+    container: containerComprovantes,
+    vazio: 'Você ainda não enviou nenhum comprovante.',
+    iconeVazio: '📎',
+    colunas: [
+      { chave: 'valor_debito', titulo: 'Valor', sortavel: true, valorOrdenacao: (c) => Number(c.valor_debito) || 0, render: (c) => el('td', { class: 'cell-num' }, formatarMoeda(c.valor_debito)) },
+      {
+        chave: 'status', titulo: 'Status', sortavel: true,
+        render: (c) => el('td', {}, el('span', { class: `status-badge ${rotuloStatusComprovante(c.status).classe}`, text: rotuloStatusComprovante(c.status).texto })),
+      },
+      { chave: 'criado_em', titulo: 'Enviado em', sortavel: true, valorOrdenacao: (c) => c.criado_em, render: (c) => el('td', { class: 'cell-muted' }, formatarData(c.criado_em)) },
+    ],
+  }).setDados(comprovantes);
+}
+
+function rotuloStatusComprovante(status) {
+  const mapa = {
+    confirmado: { texto: 'Confirmado', classe: 'pago' },
+    em_analise: { texto: 'Em análise', classe: 'pendente' },
+    pendente: { texto: 'Processando', classe: 'pendente' },
+  };
+  return mapa[status] || { texto: status, classe: 'pendente' };
+}
+
+async function abrirModalPagamento() {
+  const resumo = cache.financeiroEntregador || (await Api.get('/entregador/financeiro/resumo'));
+
+  if (resumo.debitoAtual <= 0) {
+    Toast.sucesso('Você não tem nenhum débito pendente no momento.');
+    return;
+  }
+
+  const pix = await Api.get('/entregador/pix');
+  renderizarEtapaPix(resumo, pix);
+}
+
+function renderizarEtapaPix(resumo, pix) {
+  Modal.abrir(el('div', {}, [
+    el('h3', { text: 'Pagar débito' }),
+    el('p', { class: 'modal-subtitle', text: `Valor a pagar: ${formatarMoeda(resumo.debitoAtual)}` }),
+
+    el('div', { class: 'form-section', style: 'margin-top:16px' }, [
+      el('div', { class: 'form-section-title', text: `Chave PIX (${pix.tipoChave})` }),
+      el('div', { style: 'display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap' }, [
+        el('code', { style: 'flex:1; font-size:15px; font-weight:700; word-break:break-all; min-width:160px', text: pix.chave }),
+        el('button', { class: 'btn btn-secondary btn-sm', style: 'width:auto; margin:0', onclick: () => copiarChavePix(pix.chave), text: 'Copiar Chave PIX' }),
+      ]),
+    ]),
+
+    el('div', { class: 'modal-acoes' }, [
+      el('button', { class: 'btn btn-secondary', onclick: () => Modal.fechar(), text: 'Fechar' }),
+      el('button', { class: 'btn btn-primary', onclick: () => renderizarEtapaUpload(resumo, pix), text: 'Já Realizei o Pagamento' }),
+    ]),
+  ]));
+}
+
+function copiarChavePix(chave) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(chave).then(
+      () => Toast.sucesso('Chave PIX copiada.'),
+      () => Toast.erro('Não foi possível copiar automaticamente. Copie manualmente.')
+    );
+  } else {
+    Toast.erro('Copie a chave manualmente — seu navegador não permite copiar automaticamente aqui.');
+  }
+}
+
+const FORMATOS_COMPROVANTE_ACEITOS = '.jpg,.jpeg,.png,.webp,.pdf';
+
+function renderizarEtapaUpload(resumo, pix) {
+  let arquivoSelecionado = null;
+
+  const inputArquivo = el('input', { type: 'file', accept: FORMATOS_COMPROVANTE_ACEITOS });
+  const nomeArquivo = el('div', { class: 'field-hint', text: 'Nenhum arquivo selecionado.' });
+
+  inputArquivo.addEventListener('change', () => {
+    arquivoSelecionado = inputArquivo.files[0] || null;
+    nomeArquivo.textContent = arquivoSelecionado ? arquivoSelecionado.name : 'Nenhum arquivo selecionado.';
+  });
+
+  const botaoEnviar = el('button', {
+    class: 'btn btn-primary',
+    text: 'Enviar Comprovante',
+    onclick: async () => {
+      if (!arquivoSelecionado) {
+        Toast.erro('Selecione um arquivo antes de enviar.');
+        return;
+      }
+
+      botaoEnviar.setAttribute('disabled', 'true');
+      botaoEnviar.textContent = 'Enviando e validando...';
+
+      try {
+        const formData = new FormData();
+        formData.append('comprovante', arquivoSelecionado);
+        const resultado = await Api.upload('/entregador/comprovantes', formData);
+        renderizarResultadoComprovante(resultado);
+      } catch (erro) {
+        Toast.erro(erro.message);
+        botaoEnviar.removeAttribute('disabled');
+        botaoEnviar.textContent = 'Enviar Comprovante';
+      }
+    },
+  });
+
+  Modal.abrir(el('div', {}, [
+    el('h3', { text: 'Enviar comprovante' }),
+    el('p', { class: 'modal-subtitle', text: 'Formatos aceitos: JPG, PNG, WEBP ou PDF (até 8 MB).' }),
+
+    el('div', { class: 'form-group' }, [inputArquivo, nomeArquivo]),
+
+    el('div', { class: 'modal-acoes' }, [
+      el('button', { class: 'btn btn-secondary', onclick: () => renderizarEtapaPix(resumo, pix), text: 'Voltar' }),
+      botaoEnviar,
+    ]),
+  ]));
+}
+
+function renderizarResultadoComprovante(resultado) {
+  const info = resultado.status === 'confirmado'
+    ? { icone: '✅', titulo: 'Pagamento confirmado!', texto: 'Seu débito foi quitado automaticamente. Obrigado!' }
+    : { icone: '⏳', titulo: 'Comprovante em análise', texto: 'Recebemos seu comprovante e ele será revisado por um administrador em breve.' };
+
+  Modal.abrir(el('div', {}, [
+    el('h3', { text: `${info.icone} ${info.titulo}` }),
+    el('p', { class: 'modal-subtitle', style: 'margin-top:8px', text: info.texto }),
+    el('div', { class: 'modal-acoes' }, [
+      el('button', {
+        class: 'btn btn-primary',
+        text: 'Fechar',
+        onclick: () => {
+          Modal.fechar();
+          carregarFinanceiroEntregador();
+        },
+      }),
+    ]),
+  ]));
 }
 
 /* =========================================================
