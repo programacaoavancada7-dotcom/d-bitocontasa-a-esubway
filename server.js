@@ -10,6 +10,8 @@ const { port } = require('./src/config/env');
 const { migrate } = require('./src/db/schema');
 const { seedAdmin } = require('./src/db/seed');
 const app = require('./src/app');
+const whatsappService = require('./src/services/whatsappService');
+const logger = require('./src/utils/logger');
 
 async function iniciar() {
   await migrate();
@@ -17,6 +19,12 @@ async function iniciar() {
 
   app.listen(port, '0.0.0.0', () => {
     console.log(`Servidor rodando na porta ${port}`);
+  });
+
+  // De propósito, fora do await acima: se o WhatsApp não conectar (ex:
+  // ainda não escaneou o QR Code), o ERP continua funcionando normalmente.
+  whatsappService.conectar().catch((erro) => {
+    logger.error({ erro: erro.message }, 'Falha ao iniciar o serviço de WhatsApp no boot');
   });
 }
 

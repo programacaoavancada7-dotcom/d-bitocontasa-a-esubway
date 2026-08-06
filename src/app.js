@@ -12,6 +12,7 @@ const entregadoresRoutes = require('./routes/entregadores.routes');
 const gastosRoutes = require('./routes/gastos.routes');
 const relatoriosRoutes = require('./routes/relatorios.routes');
 const sistemaRoutes = require('./routes/sistema.routes');
+const whatsappRoutes = require('./routes/whatsapp.routes');
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use(entregadoresRoutes);
 app.use(gastosRoutes);
 app.use(relatoriosRoutes);
 app.use(sistemaRoutes);
+app.use(whatsappRoutes);
 
 // Qualquer rota de API (prefixo conhecido) que não bateu em nada acima
 // retorna 404 em JSON, em vez de silenciosamente devolver o index.html

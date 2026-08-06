@@ -63,4 +63,16 @@ module.exports = {
         database: process.env.PGDATABASE || 'postgres',
       }
     : null,
+
+  whatsapp: {
+    // false desliga o módulo inteiro (útil pra rodar o resto do sistema
+    // sem depender do WhatsApp estar disponível, ex: enquanto testa).
+    habilitado: process.env.WHATSAPP_HABILITADO !== 'false',
+    nomeGrupo: process.env.WHATSAPP_GRUPO_NOME || 'Açaí clts',
+  },
+
+  pix: {
+    tipoChave: 'CNPJ',
+    chave: process.env.PIX_CHAVE || '37.937.310/0001-47',
+  },
 };
