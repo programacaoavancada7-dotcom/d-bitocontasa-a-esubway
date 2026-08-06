@@ -3,6 +3,7 @@ const { auth, admin } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const whatsappService = require('../services/whatsappService');
 const groupService = require('../services/whatsappGroupService');
+const { executarLembretes } = require('../jobs/lembreteSemanalJob');
 const AppError = require('../utils/AppError');
 const { whatsapp: whatsappConfig } = require('../config/env');
 
@@ -66,6 +67,17 @@ router.get(
   asyncHandler(async (req, res) => {
     const atual = await groupService.buscarConfig(whatsappConfig.nomeGrupo);
     res.json(atual || { nome: whatsappConfig.nomeGrupo, jid: null });
+  })
+);
+
+// Dispara o lembrete semanal na hora, sem esperar quarta-feira — útil
+// pra testar e pra mandar um lembrete extra fora do horário fixo.
+router.post(
+  '/admin/lembretes/executar',
+  auth,
+  admin,
+  asyncHandler(async (req, res) => {
+    res.json(await executarLembretes());
   })
 );
 

@@ -208,9 +208,159 @@ async function resumoFinanceiro(entregadorId) {
   };
 }
 
+/* =========================================================
+   PAINEL ADMINISTRATIVO
+========================================================= */
+
+/** @param {{status?: string}} filtro */
+async function listarTodosAdmin({ status } = {}) {
+  const condicoes = [];
+  const params = [];
+
+  if (status) {
+    condicoes.push('c.status = ?');
+    params.push(status);
+  }
+
+  const where = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
+
+  // DISTINCT ON (c.id) + "ORDER BY c.id DESC, ocr.id DESC" pega só a
+  // tentativa de OCR mais recente de cada comprovante — sem isso, um
+  // comprovante reprocessado (que gera uma nova linha em
+  // comprovante_ocr a cada tentativa, de propósito, pra manter
+  // histórico) apareceria duplicado na listagem.
+  return all(
+    `
+    SELECT DISTINCT ON (c.id)
+      c.id, c.entregador_id, c.valor_debito, c.status, c.whatsapp_status,
+      c.confirmado_em, c.confirmado_por, c.motivo_rejeicao, c.criado_em,
+      u.nome AS entregador_nome, u.telefone AS entregador_telefone,
+      ocr.confianca
+    FROM comprovantes c
+    JOIN users u ON u.id = c.entregador_id
+    LEFT JOIN comprovante_ocr ocr ON ocr.comprovante_id = c.id
+    ${where}
+    ORDER BY c.id DESC, ocr.id DESC
+    `,
+    params
+  );
+}
+
+async function buscarDetalhesAdmin(id) {
+  const comprovante = await get(
+    `
+    SELECT
+      c.id, c.entregador_id, c.valor_debito, c.arquivo_mime, c.arquivo_tamanho, c.ip_envio,
+      c.status, c.whatsapp_status, c.whatsapp_message_id, c.whatsapp_grupo_jid,
+      c.confirmado_em, c.confirmado_por, c.motivo_rejeicao, c.criado_em,
+      u.nome AS entregador_nome, u.telefone AS entregador_telefone, u.usuario AS entregador_usuario
+    FROM comprovantes c
+    JOIN users u ON u.id = c.entregador_id
+    WHERE c.id = ?
+    `,
+    [id]
+  );
+
+  if (!comprovante) throw new AppError(404, 'Comprovante não encontrado.');
+
+  const ocrHistorico = await all(
+    'SELECT * FROM comprovante_ocr WHERE comprovante_id = ? ORDER BY id DESC',
+    [id]
+  );
+
+  return { ...comprovante, ocrHistorico };
+}
+
+async function aprovarManualmente(id, adminNome) {
+  const comprovante = await get('SELECT * FROM comprovantes WHERE id = ?', [id]);
+  if (!comprovante) throw new AppError(404, 'Comprovante não encontrado.');
+  if (comprovante.status === 'confirmado') throw new AppError(400, 'Este comprovante já está confirmado.');
+
+  await gastosService.marcarTodosPagosDoEntregador(comprovante.entregador_id);
+
+  await run(
+    `UPDATE comprovantes
+     SET status = 'confirmado', confirmado_em = to_char(now() - interval '3 hours', 'YYYY-MM-DD HH24:MI:SS'), confirmado_por = ?, motivo_rejeicao = NULL
+     WHERE id = ?`,
+    [adminNome, id]
+  );
+
+  logger.info({ comprovanteId: id, admin: adminNome }, 'Comprovante aprovado manualmente por admin');
+  return { success: true };
+}
+
+async function rejeitar(id, adminNome, motivo) {
+  const comprovante = await get('SELECT * FROM comprovantes WHERE id = ?', [id]);
+  if (!comprovante) throw new AppError(404, 'Comprovante não encontrado.');
+
+  if (comprovante.status === 'confirmado') {
+    throw new AppError(400, 'Este comprovante já foi confirmado (o débito já foi marcado como pago) — não é possível rejeitar depois.');
+  }
+
+  await run(
+    `UPDATE comprovantes
+     SET status = 'rejeitado', confirmado_em = to_char(now() - interval '3 hours', 'YYYY-MM-DD HH24:MI:SS'), confirmado_por = ?, motivo_rejeicao = ?
+     WHERE id = ?`,
+    [adminNome, motivo || null, id]
+  );
+
+  logger.info({ comprovanteId: id, admin: adminNome, motivo }, 'Comprovante rejeitado por admin');
+  return { success: true };
+}
+
+async function reprocessarOcr(id) {
+  const comprovante = await get(
+    'SELECT id, entregador_id, valor_debito, arquivo_dados, arquivo_mime FROM comprovantes WHERE id = ?',
+    [id]
+  );
+
+  if (!comprovante) throw new AppError(404, 'Comprovante não encontrado.');
+  if (!comprovante.arquivo_dados) {
+    throw new AppError(400, 'Este comprovante não tem uma imagem armazenada para reprocessar (provavelmente é um PDF).');
+  }
+
+  const resultado = await processarOcr(comprovante, { buffer: comprovante.arquivo_dados, mimetype: comprovante.arquivo_mime });
+  logger.info({ comprovanteId: id }, 'OCR reprocessado manualmente por admin');
+  return resultado;
+}
+
+async function enviarMensagemEntregador(entregadorId, texto) {
+  const entregador = await get(`SELECT id, nome, telefone FROM users WHERE id = ? AND role = 'entregador'`, [entregadorId]);
+  if (!entregador) throw new AppError(404, 'Entregador não encontrado.');
+  if (!entregador.telefone) throw new AppError(400, 'Este entregador não tem telefone cadastrado.');
+
+  const whatsappService = require('./whatsappService'); // eslint-disable-line global-require
+  await whatsappService.enviarParaTelefone({
+    telefone: entregador.telefone,
+    texto,
+    tipo: 'admin_mensagem',
+    entregadorId,
+    velocidade: 'imediato',
+  });
+
+  return { success: true };
+}
+
+async function solicitarNovoComprovante(comprovanteId) {
+  const comprovante = await get('SELECT entregador_id FROM comprovantes WHERE id = ?', [comprovanteId]);
+  if (!comprovante) throw new AppError(404, 'Comprovante não encontrado.');
+
+  return enviarMensagemEntregador(
+    comprovante.entregador_id,
+    'Seu comprovante enviado não pôde ser validado. Por favor, acesse o sistema e envie um novo comprovante de pagamento.'
+  );
+}
+
 module.exports = {
   registrarComprovante,
   listarPorEntregador,
   buscarArquivo,
   resumoFinanceiro,
+  listarTodosAdmin,
+  buscarDetalhesAdmin,
+  aprovarManualmente,
+  rejeitar,
+  reprocessarOcr,
+  enviarMensagemEntregador,
+  solicitarNovoComprovante,
 };

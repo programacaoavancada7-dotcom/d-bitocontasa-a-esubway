@@ -334,6 +334,7 @@
             <button class="tab-pill active" onclick="mudarSubTab('entregadores','entLista', this)">Lista</button>
             <button class="tab-pill" onclick="mudarSubTab('entregadores','entFinanceiro', this)">Financeiro</button>
             <button class="tab-pill" onclick="mudarSubTab('entregadores','entRanking', this)">Desempenho</button>
+            <button class="tab-pill" onclick="mudarSubTab('entregadores','entComprovantes', this)">Comprovantes</button>
           </div>
 
           <div id="entLista" class="module-panel active-panel">
@@ -420,6 +421,50 @@
               </div>
               <div id="rankingEntregadores" style="margin-top:14px"></div>
             </div>
+          </div>
+
+          <!-- COMPROVANTES (revisão + status da conexão WhatsApp) -->
+          <div id="entComprovantes" class="module-panel">
+
+            <div class="card" style="margin-bottom:20px">
+              <div class="card-header-flex">
+                <div class="card-title">
+                  <h3>Conexão WhatsApp</h3>
+                  <p>Usada para receber comprovantes no grupo e enviar lembretes.</p>
+                </div>
+                <span id="whatsappStatusBadge" class="status-badge"></span>
+              </div>
+
+              <div id="whatsappQrArea" style="margin-top:14px"></div>
+
+              <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap">
+                <button class="btn btn-secondary btn-sm" style="width:auto; margin:0" onclick="atualizarStatusWhatsapp()">Atualizar status</button>
+                <button class="btn btn-secondary btn-sm" style="width:auto; margin:0" onclick="reconectarWhatsapp()">Reconectar</button>
+                <button class="btn btn-danger btn-sm" style="width:auto; margin:0" onclick="novoLoginWhatsapp()">Gerar novo QR Code</button>
+                <button class="btn btn-secondary btn-sm" style="width:auto; margin:0" onclick="dispararLembretes()">Disparar lembretes agora</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">
+                <h3>Comprovantes enviados</h3>
+                <p>Revise, aprove ou rejeite os comprovantes dos entregadores.</p>
+              </div>
+
+              <div class="table-toolbar" style="margin-top:14px">
+                <input id="buscarComprovanteAdmin" class="search-input" placeholder="Buscar por nome do entregador...">
+                <select id="filtroStatusComprovante" onchange="carregarComprovantesAdmin()">
+                  <option value="">Todos os status</option>
+                  <option value="pendente">Pendente</option>
+                  <option value="em_analise">Em análise</option>
+                  <option value="confirmado">Confirmado</option>
+                  <option value="rejeitado">Rejeitado</option>
+                </select>
+              </div>
+
+              <div id="tabelaComprovantesAdmin" class="table-wrapper" style="margin-top:14px"></div>
+            </div>
+
           </div>
 
         </section>

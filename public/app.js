@@ -150,12 +150,14 @@ const Modal = {
       }
 
       const camposNode = campos.map((campo) => {
-        const input = el('input', {
-          type: campo.tipo || 'text',
-          value: campo.valor || '',
-          placeholder: campo.placeholder || campo.label,
-          autocomplete: campo.tipo === 'password' ? 'new-password' : 'off',
-        });
+        const input = campo.tipo === 'textarea'
+          ? el('textarea', { placeholder: campo.placeholder || campo.label, text: campo.valor || '' })
+          : el('input', {
+              type: campo.tipo || 'text',
+              value: campo.valor || '',
+              placeholder: campo.placeholder || campo.label,
+              autocomplete: campo.tipo === 'password' ? 'new-password' : 'off',
+            });
         inputsPorCampo[campo.nome] = input;
 
         const erro = el('div', { class: 'field-error hidden', text: 'Campo obrigatório.' });
@@ -502,6 +504,7 @@ function inicializarBuscas() {
   ligarBusca('buscarEntregador', (termo) => tabelaEntregadores.filtrar((e) => e.nome.toLowerCase().includes(termo) || e.usuario.toLowerCase().includes(termo)));
   ligarBusca('buscarGastoFuncionario', (termo) => tabelasGastos.funcionario.filtrar((g) => g.nome.toLowerCase().includes(termo)));
   ligarBusca('buscarGastoEntregador', (termo) => tabelasGastos.entregador.filtrar((g) => g.nome.toLowerCase().includes(termo)));
+  ligarBusca('buscarComprovanteAdmin', (termo) => tabelaComprovantesAdmin.filtrar((c) => c.entregador_nome.toLowerCase().includes(termo)));
 }
 
 /* =========================================================
@@ -527,6 +530,12 @@ async function carregarTudo() {
   renderizarRanking('entregador');
   renderizarSelectPessoas();
   popularSeletorDeAno();
+
+  // Independentes do Promise.all acima de propósito: se o WhatsApp
+  // estiver indisponível, isso não deve impedir o resto do painel
+  // administrativo de carregar.
+  carregarComprovantesAdmin().catch((erro) => Toast.erro(erro.message));
+  atualizarStatusWhatsapp().catch(() => {});
 }
 
 async function recarregarGastosEResumo() {
@@ -1325,6 +1334,345 @@ async function carregarPainelFuncionario() {
 }
 
 /* =========================================================
+   WHATSAPP (painel admin)
+========================================================= */
+
+const ROTULOS_STATUS_WHATSAPP = {
+  conectado: { texto: 'Conectado', classe: 'pago' },
+  aguardando_qr: { texto: 'Aguardando QR Code', classe: 'pendente' },
+  conectando: { texto: 'Conectando...', classe: 'pendente' },
+  desconectado: { texto: 'Desconectado', classe: 'pendente' },
+};
+
+async function atualizarStatusWhatsapp() {
+  const status = await Api.get('/admin/whatsapp/status');
+  renderizarStatusWhatsapp(status);
+}
+
+function renderizarStatusWhatsapp(status) {
+  const badge = document.getElementById('whatsappStatusBadge');
+  const info = ROTULOS_STATUS_WHATSAPP[status.status] || { texto: status.status, classe: 'pendente' };
+  badge.className = `status-badge ${info.classe}`;
+  badge.textContent = info.texto;
+
+  const area = document.getElementById('whatsappQrArea');
+
+  if (status.qrCodeDataUrl) {
+    limparEPreencher(area, [el('div', {}, [
+      el('p', { class: 'field-hint', text: 'Escaneie com o WhatsApp do número da loja (⋮ Aparelhos conectados → Conectar um aparelho):' }),
+      el('img', {
+        src: status.qrCodeDataUrl,
+        style: 'width:220px; height:220px; border-radius:12px; margin-top:10px; border:1px solid var(--border); background:white; padding:8px',
+      }),
+    ])]);
+    return;
+  }
+
+  if (status.ultimoErro) {
+    limparEPreencher(area, [el('div', { class: 'insight-card tone-warning' }, [
+      el('span', { class: 'insight-icon', text: '⚠️' }),
+      el('div', { class: 'insight-text' }, [el('strong', { text: 'Aviso' }), el('span', { text: status.ultimoErro })]),
+    ])]);
+    return;
+  }
+
+  if (status.status === 'conectado') {
+    limparEPreencher(area, [el('div', { class: 'insight-card tone-info' }, [
+      el('span', { class: 'insight-icon', text: '✅' }),
+      el('div', { class: 'insight-text' }, [el('strong', { text: 'Tudo certo' }), el('span', { text: `Grupo configurado: ${status.grupoConfigurado}` })]),
+    ])]);
+    return;
+  }
+
+  limparEPreencher(area, []);
+}
+
+async function reconectarWhatsapp() {
+  try {
+    await Api.post('/admin/whatsapp/reconectar');
+    Toast.sucesso('Reconectando...');
+    setTimeout(() => atualizarStatusWhatsapp().catch(() => {}), 2500);
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function novoLoginWhatsapp() {
+  const ok = await Modal.confirmar({
+    titulo: 'Gerar novo QR Code',
+    mensagem: 'Isso encerra a sessão atual do WhatsApp e gera um novo QR Code — use se o número foi desconectado pelo celular e a reconexão automática não resolveu.',
+    textoConfirmar: 'Gerar novo QR Code',
+    perigo: true,
+  });
+  if (!ok) return;
+
+  try {
+    await Api.post('/admin/whatsapp/novo-login');
+    Toast.sucesso('Gerando novo QR Code...');
+    setTimeout(() => atualizarStatusWhatsapp().catch(() => {}), 2500);
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function dispararLembretes() {
+  const ok = await Modal.confirmar({
+    titulo: 'Disparar lembretes agora',
+    mensagem: 'Envia o lembrete de débito pendente para todos os entregadores com telefone cadastrado, agora — fora do agendamento automático de quarta-feira.',
+    textoConfirmar: 'Disparar lembretes',
+  });
+  if (!ok) return;
+
+  try {
+    const resultado = await Api.post('/admin/lembretes/executar');
+    if (resultado.ignorados) {
+      Toast.erro(resultado.motivo === 'whatsapp_desconectado' ? 'WhatsApp não está conectado no momento.' : 'Lembretes desabilitados.');
+    } else {
+      Toast.sucesso(`${resultado.enviados} lembrete(s) adicionado(s) à fila de envio.`);
+    }
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+/* =========================================================
+   COMPROVANTES (painel admin)
+========================================================= */
+
+let cacheComprovantesAdmin = [];
+
+const tabelaComprovantesAdmin = criarTabela({
+  container: document.getElementById('tabelaComprovantesAdmin'),
+  vazio: 'Nenhum comprovante enviado ainda.',
+  iconeVazio: '📎',
+  colunas: [
+    colunaTexto('entregador_nome', 'Entregador', { classe: 'cell-strong' }),
+    colunaTexto('entregador_telefone', 'Telefone', { classe: 'cell-muted' }),
+    {
+      chave: 'valor_debito', titulo: 'Débito', sortavel: true,
+      valorOrdenacao: (c) => Number(c.valor_debito) || 0,
+      render: (c) => el('td', { class: 'cell-num' }, formatarMoeda(c.valor_debito)),
+    },
+    {
+      chave: 'status', titulo: 'Status', sortavel: true,
+      render: (c) => el('td', {}, el('span', { class: `status-badge ${rotuloStatusComprovante(c.status).classe}`, text: rotuloStatusComprovante(c.status).texto })),
+    },
+    {
+      chave: 'confianca', titulo: 'Confiança IA', sortavel: true,
+      valorOrdenacao: (c) => c.confianca || 0,
+      render: (c) => el('td', { class: 'cell-muted' }, c.confianca != null ? `${Math.round(c.confianca * 100)}%` : '—'),
+    },
+    {
+      chave: 'criado_em', titulo: 'Data', sortavel: true,
+      valorOrdenacao: (c) => c.criado_em,
+      render: (c) => el('td', { class: 'cell-muted' }, formatarData(c.criado_em)),
+    },
+    colunaAcoes((comprovante) => {
+      const acoes = [
+        { label: 'Visualizar comprovante', onClick: () => visualizarImagemComprovante(comprovante) },
+        { label: 'Visualizar OCR', onClick: () => visualizarOcrComprovante(comprovante) },
+        { label: 'Visualizar histórico do entregador', onClick: () => visualizarHistoricoEntregador(comprovante) },
+      ];
+
+      if (comprovante.status !== 'confirmado') {
+        acoes.push({ label: 'Aprovar', onClick: () => aprovarComprovanteAdmin(comprovante) });
+        acoes.push({ label: 'Rejeitar', perigo: true, onClick: () => rejeitarComprovanteAdmin(comprovante) });
+        acoes.push({ label: 'Reprocessar OCR', onClick: () => reprocessarComprovanteAdmin(comprovante) });
+      }
+
+      acoes.push({ label: 'Solicitar novo comprovante', onClick: () => solicitarNovoComprovanteAdmin(comprovante) });
+      acoes.push({ label: 'Enviar mensagem', onClick: () => enviarMensagemAdmin(comprovante) });
+
+      return acoes;
+    }),
+  ],
+});
+
+async function carregarComprovantesAdmin() {
+  const statusFiltro = document.getElementById('filtroStatusComprovante').value;
+  const query = statusFiltro ? `?status=${encodeURIComponent(statusFiltro)}` : '';
+  cacheComprovantesAdmin = await Api.get(`/admin/comprovantes${query}`);
+  tabelaComprovantesAdmin.setDados(cacheComprovantesAdmin);
+}
+
+async function visualizarImagemComprovante(comprovante) {
+  try {
+    const resposta = await fetch(`/admin/comprovantes/${comprovante.id}/arquivo`, { headers: { authorization: token } });
+    if (!resposta.ok) throw new Error('Não foi possível carregar o comprovante.');
+
+    const blob = await resposta.blob();
+    const url = URL.createObjectURL(blob);
+
+    Modal.abrir(el('div', {}, [
+      el('h3', { text: `Comprovante — ${comprovante.entregador_nome}` }),
+      blob.type === 'application/pdf'
+        ? el('p', { class: 'modal-subtitle', style: 'margin-top:10px', text: 'Este comprovante é um PDF — abra em uma nova aba para visualizar.' })
+        : el('img', { src: url, style: 'width:100%; border-radius:12px; margin-top:14px' }),
+      el('div', { class: 'modal-acoes' }, [
+        el('a', { href: url, target: '_blank', class: 'btn btn-secondary', style: 'text-decoration:none; text-align:center; display:flex; align-items:center; justify-content:center', text: 'Abrir em nova aba' }),
+        el('button', { class: 'btn btn-primary', onclick: () => Modal.fechar(), text: 'Fechar' }),
+      ]),
+    ]), { largo: true });
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+function rotuloChecagemOcr(chave) {
+  const mapa = {
+    cnpjBate: 'CNPJ confere',
+    valorBate: 'Valor confere',
+    dataRecente: 'Data recente',
+    estruturaPix: 'Estrutura de comprovante PIX',
+    temFavorecido: 'Nome do favorecido identificado',
+    confiancaOcrSuficiente: 'Confiança de leitura suficiente',
+  };
+  return mapa[chave] || chave;
+}
+
+async function visualizarOcrComprovante(comprovante) {
+  const detalhes = await Api.get(`/admin/comprovantes/${comprovante.id}`);
+  const ultimo = detalhes.ocrHistorico[0];
+
+  if (!ultimo) {
+    Modal.abrir(el('div', {}, [
+      el('h3', { text: 'Leitura automática (OCR)' }),
+      el('p', { class: 'modal-subtitle', style: 'margin-top:10px', text: 'Nenhuma leitura registrada — provavelmente este comprovante é um PDF, que não passa por OCR automático.' }),
+      el('div', { class: 'modal-acoes' }, [el('button', { class: 'btn btn-primary', onclick: () => Modal.fechar(), text: 'Fechar' })]),
+    ]));
+    return;
+  }
+
+  const checks = ultimo.validacoes || {};
+  const linhasChecagem = Object.entries(checks).map(([chave, ok]) => el('div', { class: 'legend-item' }, [
+    el('span', { class: 'legend-dot', style: `background:${ok ? 'var(--success)' : 'var(--danger)'}` }),
+    el('span', { class: 'legend-label', text: rotuloChecagemOcr(chave) }),
+    el('span', { class: 'legend-value', text: ok ? 'OK' : 'Falhou' }),
+  ]));
+
+  Modal.abrir(el('div', {}, [
+    el('h3', { text: 'Leitura automática (OCR)' }),
+    el('p', { class: 'modal-subtitle', text: `Confiança: ${ultimo.confianca != null ? Math.round(ultimo.confianca * 100) + '%' : '—'}` }),
+
+    el('div', { class: 'form-section', style: 'margin-top:14px' }, [
+      el('div', { class: 'form-section-title', text: 'Checagens automáticas' }),
+      el('div', { style: 'display:flex; flex-direction:column; gap:6px; margin-top:8px' }, linhasChecagem),
+    ]),
+
+    el('div', { class: 'form-section', style: 'margin-top:14px' }, [
+      el('div', { class: 'form-section-title', text: 'Campos extraídos' }),
+      el('div', { class: 'field-hint', style: 'margin-top:6px', text: `Valor: ${ultimo.valor_extraido ?? '—'} · CNPJ: ${ultimo.cnpj_extraido ?? '—'} · Data: ${ultimo.data_extraida ?? '—'} · Favorecido: ${ultimo.nome_favorecido ?? '—'}` }),
+    ]),
+
+    el('div', { class: 'form-section', style: 'margin-top:14px' }, [
+      el('div', { class: 'form-section-title', text: 'Texto completo lido' }),
+      el('div', { class: 'field-hint', style: 'white-space:pre-wrap; margin-top:8px', text: ultimo.texto_completo || '(vazio)' }),
+    ]),
+
+    detalhes.ocrHistorico.length > 1
+      ? el('p', { class: 'field-hint', style: 'margin-top:10px', text: `${detalhes.ocrHistorico.length} tentativas de leitura registradas (mostrando a mais recente).` })
+      : null,
+
+    el('div', { class: 'modal-acoes' }, [el('button', { class: 'btn btn-primary', onclick: () => Modal.fechar(), text: 'Fechar' })]),
+  ]), { largo: true });
+}
+
+async function aprovarComprovanteAdmin(comprovante) {
+  const ok = await Modal.confirmar({
+    titulo: 'Aprovar comprovante',
+    mensagem: `Confirmar pagamento de "${comprovante.entregador_nome}" no valor de ${formatarMoeda(comprovante.valor_debito)}? O débito dele será marcado como pago.`,
+    textoConfirmar: 'Aprovar',
+  });
+  if (!ok) return;
+
+  try {
+    await Api.post(`/admin/comprovantes/${comprovante.id}/aprovar`);
+    Toast.sucesso('Comprovante aprovado.');
+    carregarComprovantesAdmin();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function rejeitarComprovanteAdmin(comprovante) {
+  const valores = await Modal.formulario({
+    titulo: 'Rejeitar comprovante',
+    subtitulo: `${comprovante.entregador_nome} — ${formatarMoeda(comprovante.valor_debito)}`,
+    campos: [{ nome: 'motivo', label: 'Motivo (opcional)', tipo: 'textarea' }],
+    textoConfirmar: 'Rejeitar',
+  });
+  if (!valores) return;
+
+  try {
+    await Api.post(`/admin/comprovantes/${comprovante.id}/rejeitar`, valores);
+    Toast.sucesso('Comprovante rejeitado.');
+    carregarComprovantesAdmin();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function reprocessarComprovanteAdmin(comprovante) {
+  try {
+    const resultado = await Api.post(`/admin/comprovantes/${comprovante.id}/reprocessar`);
+    Toast.sucesso(resultado.status === 'confirmado' ? 'Reprocessado: aprovado automaticamente.' : 'Reprocessado: segue em análise.');
+    carregarComprovantesAdmin();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function solicitarNovoComprovanteAdmin(comprovante) {
+  const ok = await Modal.confirmar({
+    titulo: 'Solicitar novo comprovante',
+    mensagem: `Enviar mensagem pelo WhatsApp para "${comprovante.entregador_nome}" pedindo um novo comprovante?`,
+    textoConfirmar: 'Enviar solicitação',
+  });
+  if (!ok) return;
+
+  try {
+    await Api.post(`/admin/comprovantes/${comprovante.id}/solicitar-novo`);
+    Toast.sucesso('Mensagem enviada.');
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function enviarMensagemAdmin(comprovante) {
+  const valores = await Modal.formulario({
+    titulo: `Mensagem para ${comprovante.entregador_nome}`,
+    campos: [{ nome: 'texto', label: 'Mensagem', tipo: 'textarea', obrigatorio: true }],
+    textoConfirmar: 'Enviar',
+  });
+  if (!valores) return;
+
+  try {
+    await Api.post(`/admin/entregadores/${comprovante.entregador_id}/mensagem`, valores);
+    Toast.sucesso('Mensagem enviada.');
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+function visualizarHistoricoEntregador(comprovante) {
+  const outros = cacheComprovantesAdmin.filter((c) => c.entregador_id === comprovante.entregador_id);
+
+  const linhas = outros.map((c) => el('div', { class: 'activity-item' }, [
+    el('div', { class: 'activity-icon', text: '📎' }),
+    el('div', { class: 'activity-main' }, [
+      el('div', { class: 'activity-title', text: formatarMoeda(c.valor_debito) }),
+      el('div', { class: 'activity-meta', text: `${rotuloStatusComprovante(c.status).texto} — ${formatarData(c.criado_em)}` }),
+    ]),
+  ]));
+
+  Modal.abrir(el('div', {}, [
+    el('h3', { text: `Histórico de comprovantes — ${comprovante.entregador_nome}` }),
+    el('div', { class: 'activity-list', style: 'margin-top:14px' }, linhas.length ? linhas : [estadoVazio('Nenhum outro comprovante encontrado.')]),
+    el('div', { class: 'modal-acoes' }, [el('button', { class: 'btn btn-primary', onclick: () => Modal.fechar(), text: 'Fechar' })]),
+  ]));
+}
+
+/* =========================================================
    FINANCEIRO DO ENTREGADOR (débito, pagamento PIX, comprovante)
 ========================================================= */
 
@@ -1390,6 +1738,7 @@ function rotuloStatusComprovante(status) {
     confirmado: { texto: 'Confirmado', classe: 'pago' },
     em_analise: { texto: 'Em análise', classe: 'pendente' },
     pendente: { texto: 'Processando', classe: 'pendente' },
+    rejeitado: { texto: 'Rejeitado', classe: 'pendente' },
   };
   return mapa[status] || { texto: status, classe: 'pendente' };
 }

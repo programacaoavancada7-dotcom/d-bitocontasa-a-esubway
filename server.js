@@ -11,6 +11,7 @@ const { migrate } = require('./src/db/schema');
 const { seedAdmin } = require('./src/db/seed');
 const app = require('./src/app');
 const whatsappService = require('./src/services/whatsappService');
+const lembreteSemanalJob = require('./src/jobs/lembreteSemanalJob');
 const logger = require('./src/utils/logger');
 
 async function iniciar() {
@@ -26,6 +27,8 @@ async function iniciar() {
   whatsappService.conectar().catch((erro) => {
     logger.error({ erro: erro.message }, 'Falha ao iniciar o serviço de WhatsApp no boot');
   });
+
+  lembreteSemanalJob.iniciar();
 }
 
 iniciar().catch((err) => {

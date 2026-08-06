@@ -128,6 +128,7 @@ async function migrarModuloWhatsapp() {
       whatsapp_grupo_jid TEXT,
       confirmado_em TEXT,
       confirmado_por TEXT,
+      motivo_rejeicao TEXT,
       criado_em TEXT NOT NULL DEFAULT to_char(now() - interval '3 hours', 'YYYY-MM-DD HH24:MI:SS')
     )
   `);
@@ -140,6 +141,9 @@ async function migrarModuloWhatsapp() {
   }
   if (await colunaExiste('comprovantes', 'arquivo_path')) {
     await run('ALTER TABLE comprovantes DROP COLUMN arquivo_path');
+  }
+  if (!(await colunaExiste('comprovantes', 'motivo_rejeicao'))) {
+    await run('ALTER TABLE comprovantes ADD COLUMN motivo_rejeicao TEXT');
   }
 
   await run(`
