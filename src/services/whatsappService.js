@@ -176,10 +176,14 @@ function montarJidTelefone(telefone) {
   return `${digitos}@s.whatsapp.net`;
 }
 
-/** Envia mensagem individual para o telefone de uma pessoa (lembretes). */
-async function enviarParaTelefone({ telefone, texto, tipo, entregadorId, velocidade = 'lote' }) {
+/**
+ * Envia mensagem individual para o telefone de uma pessoa (lembretes,
+ * cobrança avulsa, mensagem do admin). `prioridade: true` pula pra
+ * frente de qualquer lote em andamento — ver whatsappQueueService.js.
+ */
+async function enviarParaTelefone({ telefone, texto, tipo, entregadorId, velocidade = 'lote', prioridade = false }) {
   const jid = montarJidTelefone(telefone);
-  return queue.enfileirar({ tipo, destinoJid: jid, texto, velocidade, entregadorId });
+  return queue.enfileirar({ tipo, destinoJid: jid, texto, velocidade, entregadorId, prioridade });
 }
 
 function obterStatus() {

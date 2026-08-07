@@ -336,6 +336,9 @@ async function enviarMensagemEntregador(entregadorId, texto) {
     tipo: 'admin_mensagem',
     entregadorId,
     velocidade: 'imediato',
+    // Clique único do admin pra UM entregador — pula na frente de
+    // qualquer lote em andamento em vez de esperar na fila.
+    prioridade: true,
   });
 
   return { success: true };

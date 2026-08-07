@@ -42,7 +42,15 @@ class WhatsappQueueService {
   }
 
   /**
-   * @param {{tipo:string, destinoJid:string, texto?:string, imagemBuffer?:Buffer, imagemMimetype?:string, entregadorId?:number, comprovanteId?:number, velocidade?:'imediato'|'lote'}} job
+   * @param {{tipo:string, destinoJid:string, texto?:string, imagemBuffer?:Buffer, imagemMimetype?:string, entregadorId?:number, comprovanteId?:number, velocidade?:'imediato'|'lote', prioridade?:boolean}} job
+   *
+   * `prioridade: true` (ex: admin clicou "Enviar cobrança agora" pra
+   * UM entregador específico) entra no INÍCIO da fila em vez do fim —
+   * assim não fica esperando atrás de um lote de lembretes em
+   * andamento (que pode levar minutos, com 60–240s entre cada envio).
+   * Continua passando pelo mesmo registro em `whatsapp_mensagens` e
+   * pelo limite por minuto — isso é sobre ordem de prioridade, não
+   * sobre pular as proteções de confiabilidade/limite de envio.
    */
   async enfileirar(job) {
     const { lastID } = await run(
@@ -51,7 +59,10 @@ class WhatsappQueueService {
       [job.tipo, job.destinoJid, job.entregadorId || null, job.comprovanteId || null, job.texto || null]
     );
 
-    this.fila.push({ ...job, mensagemId: lastID, tentativas: 0 });
+    const item = { ...job, mensagemId: lastID, tentativas: 0 };
+    if (job.prioridade) this.fila.unshift(item);
+    else this.fila.push(item);
+
     this._processar();
 
     return lastID;

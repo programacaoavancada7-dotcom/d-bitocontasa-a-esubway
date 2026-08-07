@@ -65,7 +65,7 @@ function garantirWhatsappPronto() {
  * motivo pra quem chamou decidir o que fazer (o job semanal só conta
  * pra log; o envio individual vira um erro amigável pro admin).
  */
-async function enviarCobrancaParaPessoa(pessoa, { velocidade = 'lote', tipo = 'lembrete', whatsappService } = {}) {
+async function enviarCobrancaParaPessoa(pessoa, { velocidade = 'lote', tipo = 'lembrete', whatsappService, prioridade = false } = {}) {
   const total = await gastosService.totalPendenteDoUsuario(pessoa.id);
   if (total <= 0) return { enviado: false, motivo: 'sem_debito' };
   if (!pessoa.telefone) return { enviado: false, motivo: 'sem_telefone' };
@@ -76,6 +76,7 @@ async function enviarCobrancaParaPessoa(pessoa, { velocidade = 'lote', tipo = 'l
     tipo,
     entregadorId: pessoa.id,
     velocidade,
+    prioridade,
   });
 
   return { enviado: true, valor: total };
@@ -163,7 +164,10 @@ async function enviarCobrancaIndividual(entregadorId) {
   const pessoa = await get(`SELECT id, nome, telefone FROM users WHERE id = ? AND role = 'entregador'`, [entregadorId]);
   if (!pessoa) throw new AppError(404, 'Entregador não encontrado.');
 
-  const resultado = await enviarCobrancaParaPessoa(pessoa, { velocidade: 'imediato', tipo: 'cobranca', whatsappService });
+  // prioridade: true — é um clique único do admin pra UM entregador
+  // específico ("Enviar cobrança agora"), não deve esperar atrás de um
+  // lote de lembretes em andamento (ver whatsappQueueService.js).
+  const resultado = await enviarCobrancaParaPessoa(pessoa, { velocidade: 'imediato', tipo: 'cobranca', whatsappService, prioridade: true });
 
   if (!resultado.enviado) {
     throw new AppError(
