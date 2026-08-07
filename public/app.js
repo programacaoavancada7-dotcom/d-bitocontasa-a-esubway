@@ -13,6 +13,11 @@ let logoAtual = 'acai';
 // financeiro de cada um vive numa tela separada — ver missão de UX.
 let selecao = { funcionario: [], entregador: [] };
 
+// Seleção em lote da lista de envio de cobranças (WhatsApp) — módulo à
+// parte, não usa a estrutura `selecao` acima porque não é uma lista de
+// gastos, é uma lista de pessoas.
+let selecaoListaEnvio = [];
+
 // Cache da última carga, para não refazer requisições ao só trocar de aba.
 let cache = { funcionarios: [], entregadores: [], gastos: [], resumo: null };
 
@@ -351,6 +356,14 @@ function criarTabela({ container, colunas, porPagina = 8, vazio = 'Nenhum regist
   return {
     setDados(lista) { dadosCompletos = lista; dadosFiltrados = lista; pagina = 1; render(); },
     filtrar(fn) { dadosFiltrados = dadosCompletos.filter(fn); pagina = 1; render(); },
+    // Usado por "Selecionar todos": precisa saber quem está filtrado
+    // agora (resultado da busca), não a lista completa sem filtro.
+    obterFiltrados() { return dadosFiltrados; },
+    // Redesenha com o filtro/página atuais intactos (ex: depois de
+    // marcar "Selecionar todos", só pra atualizar os checkboxes na
+    // tela) — diferente de setDados(), que reaplicaria a lista inteira
+    // e perderia a busca ativa.
+    rerender() { render(); },
   };
 }
 
@@ -502,9 +515,19 @@ function mudarSubTab(moduloId, subTabId, botaoClicado) {
 function inicializarBuscas() {
   ligarBusca('buscarFuncionario', (termo) => tabelaFuncionarios.filtrar((f) => f.nome.toLowerCase().includes(termo) || f.usuario.toLowerCase().includes(termo)));
   ligarBusca('buscarEntregador', (termo) => tabelaEntregadores.filtrar((e) => e.nome.toLowerCase().includes(termo) || e.usuario.toLowerCase().includes(termo)));
-  ligarBusca('buscarGastoFuncionario', (termo) => tabelasGastos.funcionario.filtrar((g) => g.nome.toLowerCase().includes(termo)));
-  ligarBusca('buscarGastoEntregador', (termo) => tabelasGastos.entregador.filtrar((g) => g.nome.toLowerCase().includes(termo)));
+  ligarBusca('buscarGastoFuncionario', (termo) => {
+    tabelasGastos.funcionario.filtrar((g) => g.nome.toLowerCase().includes(termo));
+    atualizarInterfaceSelecao('funcionario');
+  });
+  ligarBusca('buscarGastoEntregador', (termo) => {
+    tabelasGastos.entregador.filtrar((g) => g.nome.toLowerCase().includes(termo));
+    atualizarInterfaceSelecao('entregador');
+  });
   ligarBusca('buscarComprovanteAdmin', (termo) => tabelaComprovantesAdmin.filtrar((c) => c.entregador_nome.toLowerCase().includes(termo)));
+  ligarBusca('buscarListaEnvio', (termo) => {
+    tabelaListaEnvio.filtrar((p) => p.nome.toLowerCase().includes(termo));
+    atualizarInterfaceSelecaoListaEnvio();
+  });
 }
 
 /* =========================================================
@@ -535,6 +558,7 @@ async function carregarTudo() {
   // estiver indisponível, isso não deve impedir o resto do painel
   // administrativo de carregar.
   carregarComprovantesAdmin().catch((erro) => Toast.erro(erro.message));
+  carregarListaEnvio().catch((erro) => Toast.erro(erro.message));
   atualizarStatusWhatsapp().catch(() => {});
 }
 
@@ -597,26 +621,85 @@ function renderizarKpis(containerId, resumo) {
   ]);
 }
 
-function renderizarGraficoEmpresas(resumo) {
+// Empresas que sempre existem no sistema (ver os <select> de gasto em
+// index.html) — mantidas aqui só para SEMPRE mostrar as duas no
+// gráfico, mesmo quando uma delas está zerada no período (em vez de
+// simplesmente sumir da lista, o que deixava o card vazio demais e
+// escondia informação real: "essa empresa está em dia"). Qualquer
+// empresa nova que apareça em `resumo.totalPorEmpresa` também entra,
+// sem precisar mexer aqui — não é uma lista fechada.
+const EMPRESAS_CONHECIDAS = ['Açaí no Grau', 'Subway'];
+
+function renderizarGraficoEmpresas(resumo, gastos) {
   const container = document.getElementById('graficoEmpresas');
   if (!container) return;
 
-  const entradas = Object.entries(resumo.totalPorEmpresa);
+  const nomesEmpresas = new Set([...EMPRESAS_CONHECIDAS, ...Object.keys(resumo.totalPorEmpresa)]);
+
+  // Quantidade de lançamentos pendentes por empresa — não vem do
+  // /admin/relatorios/resumo (que só soma valores), então é calculada
+  // aqui em cima do `gastos` que a Visão Geral já carrega.
+  const pendentesPorEmpresa = {};
+  (gastos || []).forEach((g) => {
+    if (g.status !== 'pendente') return;
+    const empresa = g.empresa || 'Não informado';
+    if (!pendentesPorEmpresa[empresa]) pendentesPorEmpresa[empresa] = { qtd: 0 };
+    pendentesPorEmpresa[empresa].qtd += 1;
+  });
+
+  const entradas = [...nomesEmpresas]
+    .map((empresa) => ({
+      empresa,
+      valor: resumo.totalPorEmpresa[empresa] || 0,
+      qtd: (pendentesPorEmpresa[empresa] && pendentesPorEmpresa[empresa].qtd) || 0,
+    }))
+    .sort((a, b) => b.valor - a.valor);
+
   if (!entradas.length) {
     limparEPreencher(container, [estadoVazio('Nenhum valor pendente no período.', '📊')]);
     return;
   }
 
-  const maior = Math.max(...entradas.map(([, v]) => v));
-  const linhas = entradas
-    .sort((a, b) => b[1] - a[1])
-    .map(([empresa, valor]) => el('div', { class: 'bar-row' }, [
-      el('span', { class: 'bar-row-label', text: empresa }),
-      el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill', style: `width:${maior ? (valor / maior) * 100 : 0}%` })),
-      el('span', { class: 'bar-row-value', text: formatarMoeda(valor) }),
-    ]));
+  const totalGeral = entradas.reduce((soma, e) => soma + e.valor, 0);
+  const maior = Math.max(...entradas.map((e) => e.valor), 0);
 
-  limparEPreencher(container, [el('div', { class: 'bar-list' }, linhas)]);
+  const linhas = entradas.map((e) => {
+    const percentual = totalGeral ? Math.round((e.valor / totalGeral) * 100) : 0;
+    const ticketMedio = e.qtd ? e.valor / e.qtd : 0;
+
+    return el('div', {}, [
+      el('div', { class: 'bar-row' }, [
+        el('span', { class: 'bar-row-label', text: e.empresa }),
+        el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill', style: `width:${maior ? (e.valor / maior) * 100 : 0}%` })),
+        el('span', { class: 'bar-row-value', text: formatarMoeda(e.valor) }),
+        el('span', { class: 'bar-row-percent', text: e.valor > 0 ? `${percentual}%` : '—' }),
+      ]),
+      el('div', {
+        class: 'bar-row-meta',
+        text: e.qtd
+          ? `${e.qtd} lançamento(s) pendente(s) • ticket médio ${formatarMoeda(ticketMedio)}`
+          : 'Sem pendências neste período.',
+      }),
+    ]);
+  });
+
+  // Só vale destacar "quem concentra mais" quando há de fato mais de
+  // uma empresa com valor em aberto — com uma só, seria óbvio (100%)
+  // e a frase não agregaria nada.
+  const comValor = entradas.filter((e) => e.valor > 0);
+  const dominante = comValor[0];
+
+  const insight = comValor.length > 1 && dominante
+    ? el('div', { class: 'insight-card tone-info', style: 'margin-top:16px' }, [
+        el('span', { class: 'insight-icon', text: '🏆' }),
+        el('div', { class: 'insight-text' }, [
+          el('strong', { text: `${dominante.empresa} concentra a maior parte do valor pendente` }),
+          el('span', { text: `${Math.round((dominante.valor / totalGeral) * 100)}% do total em aberto no período (${formatarMoeda(dominante.valor)}).` }),
+        ]),
+      ])
+    : null;
+
+  limparEPreencher(container, [el('div', { class: 'bar-list bar-list-detalhado' }, linhas), insight].filter(Boolean));
 }
 
 function renderizarAlertas(resumo, gastos) {
@@ -676,7 +759,7 @@ function renderizarAtividadeRecente(gastos) {
 function renderizarDashboard() {
   renderizarKpis('kpiGrid', cache.resumo);
   renderizarKpis('kpiGridRelatorio', cache.resumo);
-  renderizarGraficoEmpresas(cache.resumo);
+  renderizarGraficoEmpresas(cache.resumo, cache.gastos);
   renderizarAlertas(cache.resumo, cache.gastos);
   renderizarAtividadeRecente(cache.gastos);
 }
@@ -1031,15 +1114,35 @@ function atualizarInterfaceSelecao(tipo) {
   if (contador) contador.innerText = `${selecao[tipo].length} selecionado(s)`;
   if (acoes) acoes.classList.toggle('hidden', selecao[tipo].length === 0);
 
-  const totalNaTela = gastosPorTipo(tipo).length;
-  if (selecionarTodos) selecionarTodos.checked = totalNaTela > 0 && selecao[tipo].length === totalNaTela;
+  // "Selecionar todos" reflete o que está FILTRADO na busca agora (ex:
+  // buscou "Matheus" e marcou todos os dele) — não o total geral. Sem
+  // busca ativa, o filtrado é a lista inteira, então continua marcando
+  // todo mundo normalmente.
+  const idsFiltrados = tabelasGastos[tipo].obterFiltrados().map((g) => g.id);
+  if (selecionarTodos) selecionarTodos.checked = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecao[tipo].includes(id));
 }
 
 function toggleSelecionarTodos(tipo) {
   const sufixo = tipo === 'funcionario' ? 'Funcionario' : 'Entregador';
   const marcado = document.getElementById(`selecionarTodos${sufixo}`).checked;
-  selecao[tipo] = marcado ? gastosPorTipo(tipo).map((g) => g.id) : [];
-  renderizarGastosPorTipo(tipo);
+  const idsFiltrados = tabelasGastos[tipo].obterFiltrados().map((g) => g.id);
+
+  if (marcado) {
+    // Soma aos já selecionados (não sobrescreve) — assim dá pra buscar
+    // "Matheus", selecionar todos dele, depois buscar "Ana" e selecionar
+    // todos dela também, acumulando os dois num só lote.
+    const conjunto = new Set(selecao[tipo]);
+    idsFiltrados.forEach((id) => conjunto.add(id));
+    selecao[tipo] = [...conjunto];
+  } else {
+    const idsFiltradosSet = new Set(idsFiltrados);
+    selecao[tipo] = selecao[tipo].filter((id) => !idsFiltradosSet.has(id));
+  }
+
+  // rerender() (não renderizarGastosPorTipo/setDados) de propósito: só
+  // atualiza os checkboxes na tela, sem descartar a busca ativa.
+  tabelasGastos[tipo].rerender();
+  atualizarInterfaceSelecao(tipo);
 }
 
 async function marcarSelecionadosComoPagos(tipo) {
@@ -1670,6 +1773,156 @@ function visualizarHistoricoEntregador(comprovante) {
     el('div', { class: 'activity-list', style: 'margin-top:14px' }, linhas.length ? linhas : [estadoVazio('Nenhum outro comprovante encontrado.')]),
     el('div', { class: 'modal-acoes' }, [el('button', { class: 'btn btn-primary', onclick: () => Modal.fechar(), text: 'Fechar' })]),
   ]));
+}
+
+/* =========================================================
+   LISTA DE ENVIO (cobrança de débito por WhatsApp)
+   Mostra cada entregador com débito e o status do último envio, com
+   ação individual (kebab) e em lote (checkbox + botão), no mesmo
+   padrão de seleção já usado nas tabelas de débitos.
+========================================================= */
+
+let cacheListaEnvio = [];
+
+const ROTULOS_ENVIO_WHATSAPP = {
+  enviado: { texto: 'Enviado', classe: 'pago' },
+  pendente: { texto: 'Na fila', classe: 'pendente' },
+  falhou: { texto: 'Falhou', classe: 'pendente' },
+};
+
+function celulaUltimoEnvio(pessoa) {
+  if (!pessoa.ultimo_envio_status) {
+    return el('span', { class: 'cell-muted', text: 'Nunca enviado' });
+  }
+
+  const info = ROTULOS_ENVIO_WHATSAPP[pessoa.ultimo_envio_status] || { texto: pessoa.ultimo_envio_status, classe: 'pendente' };
+
+  return el('div', {}, [
+    el('span', { class: `status-badge ${info.classe}`, text: info.texto }),
+    el('div', { class: 'cell-muted', style: 'margin-top:4px; font-size:var(--fs-xs)', text: formatarData(pessoa.ultimo_envio_em) }),
+  ]);
+}
+
+const tabelaListaEnvio = criarTabela({
+  container: document.getElementById('tabelaListaEnvio'),
+  vazio: 'Nenhum entregador cadastrado ainda.',
+  iconeVazio: '📲',
+  colunas: [
+    {
+      chave: '_check', titulo: '', sortavel: false,
+      render: (p) => el('td', {}, el('input', {
+        type: 'checkbox', class: 'gasto-checkbox',
+        checked: selecaoListaEnvio.includes(p.id) || undefined,
+        onchange: () => toggleSelecionarListaEnvio(p.id),
+      })),
+    },
+    colunaTexto('nome', 'Entregador', { classe: 'cell-strong' }),
+    colunaTexto('telefone', 'Telefone', { classe: 'cell-muted' }),
+    {
+      chave: 'debito_pendente', titulo: 'Débito pendente', sortavel: true,
+      valorOrdenacao: (p) => Number(p.debito_pendente) || 0,
+      render: (p) => el('td', { class: 'cell-num' }, formatarMoeda(p.debito_pendente)),
+    },
+    {
+      chave: 'ultimo_envio_em', titulo: 'Último envio', sortavel: true,
+      valorOrdenacao: (p) => p.ultimo_envio_em || '',
+      render: (p) => el('td', {}, celulaUltimoEnvio(p)),
+    },
+    colunaAcoes((p) => [
+      {
+        label: 'Enviar cobrança agora',
+        onClick: () => enviarCobrancaIndividualUI(p),
+      },
+    ]),
+  ],
+});
+
+async function carregarListaEnvio() {
+  cacheListaEnvio = await Api.get('/admin/entregadores/lista-envio');
+  tabelaListaEnvio.setDados(cacheListaEnvio);
+  atualizarInterfaceSelecaoListaEnvio();
+}
+
+function toggleSelecionarListaEnvio(id) {
+  const index = selecaoListaEnvio.indexOf(id);
+  if (index > -1) selecaoListaEnvio.splice(index, 1);
+  else selecaoListaEnvio.push(id);
+  // Sem setDados/rerender aqui de propósito: o checkbox clicado já
+  // reflete visualmente sozinho, e refazer a tabela descartaria a
+  // busca ativa. Só o resumo (contador + "selecionar todos") precisa
+  // atualizar.
+  atualizarInterfaceSelecaoListaEnvio();
+}
+
+function toggleSelecionarTodosListaEnvio() {
+  const marcado = document.getElementById('selecionarTodosListaEnvio').checked;
+  // Respeita a busca ativa (ex: buscou "Matheus", marca só os dele) —
+  // sem busca, o filtrado é a lista inteira. Soma aos já selecionados
+  // em vez de sobrescrever, pra dar pra combinar buscas diferentes.
+  const idsFiltrados = tabelaListaEnvio.obterFiltrados().map((p) => p.id);
+
+  if (marcado) {
+    const conjunto = new Set(selecaoListaEnvio);
+    idsFiltrados.forEach((id) => conjunto.add(id));
+    selecaoListaEnvio = [...conjunto];
+  } else {
+    const idsFiltradosSet = new Set(idsFiltrados);
+    selecaoListaEnvio = selecaoListaEnvio.filter((id) => !idsFiltradosSet.has(id));
+  }
+
+  // rerender() (não setDados) de propósito: só atualiza os checkboxes
+  // na tela, sem descartar a busca ativa.
+  tabelaListaEnvio.rerender();
+  atualizarInterfaceSelecaoListaEnvio();
+}
+
+function atualizarInterfaceSelecaoListaEnvio() {
+  const contador = document.getElementById('contadorListaEnvio');
+  const acoes = document.getElementById('acoesLoteListaEnvio');
+  const selecionarTodos = document.getElementById('selecionarTodosListaEnvio');
+
+  if (contador) contador.innerText = `${selecaoListaEnvio.length} selecionado(s)`;
+  if (acoes) acoes.classList.toggle('hidden', selecaoListaEnvio.length === 0);
+
+  const idsFiltrados = tabelaListaEnvio.obterFiltrados().map((p) => p.id);
+  if (selecionarTodos) selecionarTodos.checked = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecaoListaEnvio.includes(id));
+}
+
+async function enviarCobrancaIndividualUI(pessoa) {
+  const ok = await Modal.confirmar({
+    titulo: 'Enviar cobrança',
+    mensagem: `Enviar cobrança de ${formatarMoeda(pessoa.debito_pendente)} pelo WhatsApp para "${pessoa.nome}" agora?`,
+    textoConfirmar: 'Enviar cobrança',
+  });
+  if (!ok) return;
+
+  try {
+    await Api.post(`/admin/entregadores/${pessoa.id}/cobranca`);
+    Toast.sucesso('Cobrança adicionada à fila de envio.');
+    await carregarListaEnvio();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
+}
+
+async function enviarCobrancaLoteUI() {
+  if (!selecaoListaEnvio.length) return;
+
+  const ok = await Modal.confirmar({
+    titulo: 'Enviar cobrança aos selecionados',
+    mensagem: `Enviar cobrança pelo WhatsApp para ${selecaoListaEnvio.length} entregador(es) selecionado(s)? O envio é gradual, um de cada vez.`,
+    textoConfirmar: 'Enviar cobranças',
+  });
+  if (!ok) return;
+
+  try {
+    const resultado = await Api.post('/admin/entregadores/cobranca-lote', { ids: selecaoListaEnvio });
+    Toast.sucesso(`${resultado.enviados} cobrança(s) adicionada(s) à fila de envio.`);
+    selecaoListaEnvio = [];
+    await carregarListaEnvio();
+  } catch (erro) {
+    Toast.erro(erro.message);
+  }
 }
 
 /* =========================================================

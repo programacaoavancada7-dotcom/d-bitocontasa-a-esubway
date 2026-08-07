@@ -335,6 +335,7 @@
             <button class="tab-pill" onclick="mudarSubTab('entregadores','entFinanceiro', this)">Financeiro</button>
             <button class="tab-pill" onclick="mudarSubTab('entregadores','entRanking', this)">Desempenho</button>
             <button class="tab-pill" onclick="mudarSubTab('entregadores','entComprovantes', this)">Comprovantes</button>
+            <button class="tab-pill" onclick="mudarSubTab('entregadores','entListaEnvio', this)">Lista de Envio</button>
           </div>
 
           <div id="entLista" class="module-panel active-panel">
@@ -463,6 +464,39 @@
               </div>
 
               <div id="tabelaComprovantesAdmin" class="table-wrapper" style="margin-top:14px"></div>
+            </div>
+
+          </div>
+
+          <!-- LISTA DE ENVIO (cobrança de débito por WhatsApp, entregador a entregador) -->
+          <div id="entListaEnvio" class="module-panel">
+
+            <div class="card">
+              <div class="card-header-flex">
+                <div class="card-title">
+                  <h3>Lista de envio de cobranças</h3>
+                  <p>Envie uma cobrança de débito pelo WhatsApp para um entregador específico, ou selecione vários de uma vez.</p>
+                </div>
+              </div>
+
+              <div class="table-toolbar" style="margin-top:14px">
+                <input id="buscarListaEnvio" class="search-input" placeholder="Buscar por nome do entregador...">
+              </div>
+
+              <div id="acoesLoteListaEnvio" class="acoes-lote hidden">
+                <div class="acoes-esquerda">
+                  <label class="select-all-label">
+                    <input type="checkbox" id="selecionarTodosListaEnvio" onclick="toggleSelecionarTodosListaEnvio()">
+                    <span>Selecionar todos</span>
+                  </label>
+                  <span id="contadorListaEnvio" class="contador-selecionados">0 selecionados</span>
+                </div>
+                <div class="acoes-direita">
+                  <button class="btn btn-primary btn-sm" onclick="enviarCobrancaLoteUI()">📲 Enviar cobrança aos selecionados</button>
+                </div>
+              </div>
+
+              <div id="tabelaListaEnvio" class="table-wrapper" style="margin-top:14px"></div>
             </div>
 
           </div>

@@ -3,7 +3,12 @@ const { auth, admin } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const whatsappService = require('../services/whatsappService');
 const groupService = require('../services/whatsappGroupService');
-const { executarLembretes } = require('../jobs/lembreteSemanalJob');
+const {
+  executarLembretes,
+  listarListaEnvio,
+  enviarCobrancaIndividual,
+  enviarCobrancaLote,
+} = require('../jobs/lembreteSemanalJob');
 const AppError = require('../utils/AppError');
 const { whatsapp: whatsappConfig } = require('../config/env');
 
@@ -78,6 +83,44 @@ router.post(
   admin,
   asyncHandler(async (req, res) => {
     res.json(await executarLembretes());
+  })
+);
+
+/* =========================================================
+   LISTA DE ENVIO — cobrança de débito por WhatsApp, entregador a
+   entregador (ou em lote selecionado), fora do agendamento automático.
+========================================================= */
+
+router.get(
+  '/admin/entregadores/lista-envio',
+  auth,
+  admin,
+  asyncHandler(async (req, res) => {
+    res.json(await listarListaEnvio());
+  })
+);
+
+router.post(
+  '/admin/entregadores/:id/cobranca',
+  auth,
+  admin,
+  asyncHandler(async (req, res) => {
+    res.json(await enviarCobrancaIndividual(req.params.id));
+  })
+);
+
+router.post(
+  '/admin/entregadores/cobranca-lote',
+  auth,
+  admin,
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || !ids.length) {
+      throw new AppError(400, 'Selecione ao menos um entregador.');
+    }
+
+    res.json(await enviarCobrancaLote(ids));
   })
 );
 
