@@ -149,9 +149,36 @@ async function enviarParaGrupo({ texto, imagemBuffer, imagemMimetype, tipo, entr
   return jid;
 }
 
+/**
+ * Telefones cadastrados no sistema são salvos como DDD + número, sem
+ * código do país (ex: "86999253251", 11 dígitos) — ver
+ * pessoasService.js normalizarTelefone(), que só remove não-dígitos.
+ *
+ * Um JID de WhatsApp precisa do número completo, com código do país
+ * (Brasil = 55). Sem isso, o JID montado ("86999253251@s.whatsapp.net")
+ * não corresponde a nenhuma conta real: o Baileys aceita o envio e
+ * `sock.sendMessage` retorna normalmente (por isso `whatsapp_mensagens`
+ * mostra status 'enviado', sem nenhum erro), mas a mensagem não chega
+ * em lugar nenhum. Isso não afeta o grupo (JID em formato @g.us,
+ * resolvido por nome via whatsappGroupService.js) — só o envio
+ * individual (lembrete, cobrança, mensagem avulsa do admin).
+ */
+function montarJidTelefone(telefone) {
+  const digitos = telefone.replace(/\D/g, '');
+
+  // DDD (2) + número (8 ou 9 dígitos) = 10 ou 11 dígitos sem o país.
+  // Só completa quando o número ainda não tem o "55" na frente, pra não
+  // duplicar caso algum cadastro já tenha sido feito com código do país.
+  if (digitos.length <= 11 && !digitos.startsWith('55')) {
+    return `55${digitos}@s.whatsapp.net`;
+  }
+
+  return `${digitos}@s.whatsapp.net`;
+}
+
 /** Envia mensagem individual para o telefone de uma pessoa (lembretes). */
 async function enviarParaTelefone({ telefone, texto, tipo, entregadorId, velocidade = 'lote' }) {
-  const jid = telefone.replace(/\D/g, '') + '@s.whatsapp.net';
+  const jid = montarJidTelefone(telefone);
   return queue.enfileirar({ tipo, destinoJid: jid, texto, velocidade, entregadorId });
 }
 
