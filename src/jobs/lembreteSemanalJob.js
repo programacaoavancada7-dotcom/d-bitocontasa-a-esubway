@@ -33,6 +33,8 @@ function montarMensagem(nome, valor) {
     'Após o pagamento envie o comprovante pelo sistema.',
     '',
     'Obrigado.',
+    'Caso não tenha acesso ao sistema, segue o link: https://acainograuandsubway.onrender.com/',
+    'PIX: 37.937.310/0001-47   nos envie o comprovante ou por aqui na conversa, ou pelo sistema.',
   ].join('\n');
 }
 
