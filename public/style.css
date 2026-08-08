@@ -750,15 +750,21 @@ table.data-table{
 .kebab-btn:hover,.kebab-btn:focus-visible{background:var(--surface-hover); border-color:var(--accent); color:var(--text)}
 
 .kebab-menu{
-  position:absolute;
-  top:34px;
-  right:0;
-  min-width:170px;
+  /* position:fixed (não absolute) + anexado no <body> via JS, de
+     propósito: um menu absolute dentro da tabela ficava sujeito ao
+     overflow-x:auto do .table-wrapper, que corta o eixo vertical junto
+     (regra do CSS) — cortando o próprio menu em telas/linhas perto da
+     borda. top/left são calculados em runtime (ver colunaAcoes em
+     app.js), os valores abaixo são só um estado inicial seguro. */
+  position:fixed;
+  top:0;
+  left:0;
+  min-width:200px;
   background:var(--surface-2);
   border:1px solid var(--border-strong);
   border-radius:var(--radius-sm);
   box-shadow:var(--shadow-md);
-  z-index:40;
+  z-index:500;
   padding:6px;
   display:flex;
   flex-direction:column;

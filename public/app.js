@@ -388,23 +388,58 @@ function colunaAcoes(gerarItens) {
       wrapper.appendChild(btn);
 
       let menuAberto = null;
+
       function fechar() {
-        if (menuAberto) { menuAberto.remove(); menuAberto = null; document.removeEventListener('click', aoClicarFora); }
+        if (!menuAberto) return;
+        menuAberto.remove();
+        menuAberto = null;
+        document.removeEventListener('click', aoClicarFora, true);
+        window.removeEventListener('scroll', fechar, true);
+        window.removeEventListener('resize', fechar);
       }
+
       function aoClicarFora(evento) {
-        if (!wrapper.contains(evento.target)) fechar();
+        if (wrapper.contains(evento.target)) return;
+        if (menuAberto && menuAberto.contains(evento.target)) return;
+        fechar();
+      }
+
+      // Calcula a posição em tela (não relativa à tabela) e decide abrir
+      // pra cima quando não há espaço embaixo — evita repetir o mesmo
+      // corte que motivou tirar o menu de dentro da tabela.
+      function posicionar() {
+        const rect = btn.getBoundingClientRect();
+        const alturaMenu = menuAberto.offsetHeight;
+        const larguraMenu = menuAberto.offsetWidth;
+
+        const cabeEmbaixo = rect.bottom + 6 + alturaMenu <= window.innerHeight;
+        menuAberto.style.top = cabeEmbaixo ? `${rect.bottom + 6}px` : `${Math.max(8, rect.top - 6 - alturaMenu)}px`;
+
+        const esquerda = Math.min(rect.right - larguraMenu, window.innerWidth - larguraMenu - 8);
+        menuAberto.style.left = `${Math.max(8, esquerda)}px`;
       }
 
       btn.addEventListener('click', (evento) => {
         evento.stopPropagation();
         if (menuAberto) { fechar(); return; }
+
         menuAberto = el('div', { class: 'kebab-menu' }, gerarItens(item).map((acao) => el('button', {
           class: acao.perigo ? 'danger' : '',
           onclick: () => { fechar(); acao.onClick(); },
           text: acao.label,
         })));
-        wrapper.appendChild(menuAberto);
-        document.addEventListener('click', aoClicarFora);
+
+        // Anexado no <body>, não dentro da tabela: assim o menu nunca
+        // fica cortado pelo overflow de nenhum container ancestral (a
+        // tabela tem overflow-x:auto pra rolar na horizontal — o que,
+        // por regra do CSS, converte o overflow-y dela pra "auto"
+        // também, cortando qualquer coisa posicionada relativa a ela).
+        document.body.appendChild(menuAberto);
+        posicionar();
+
+        document.addEventListener('click', aoClicarFora, true);
+        window.addEventListener('scroll', fechar, true);
+        window.addEventListener('resize', fechar);
       });
 
       td.appendChild(wrapper);
